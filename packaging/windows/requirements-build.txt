@@ -1,0 +1,11 @@
+# Exact versions used for the Windows build (tested together).
+fastapi==0.141.1
+starlette==1.6.0
+pydantic==2.13.5
+uvicorn==0.53.0
+python-multipart==0.0.32
+requests==2.33.1
+markdown-it-py==4.2.0
+mdurl==0.1.2
+nh3==0.3.7
+pyinstaller==6.22.3

@@ -1,0 +1,1037 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FEM Tracker</title>
+<link rel="icon" type="image/png" href="/static/icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Semi+Condensed:wght@500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#EEF1F4; --panel:#FFFFFF; --ink:#1B2733; --ink2:#5A6877; --line:#CAD3DC;
+  /* status colours follow a stress contour legend: cold = waiting, hot = broken */
+  --queued:#2B59C3; --on_cluster:#1FA2B8; --awaiting_population:#D9A21B; --populated:#3A9D5D;
+  --failed:#D64533; --cancelled:#8C96A0;
+  --r:3px;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:15px/1.45 Barlow,system-ui,sans-serif;font-variant-numeric:tabular-nums}
+h1,h2,h3{font-family:"Barlow Semi Condensed",Barlow,sans-serif;font-weight:600;margin:0}
+button,input,textarea,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:var(--r)}
+button:hover{border-color:var(--ink2)}
+button.primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+button.danger{color:var(--failed)}
+:focus-visible{outline:2px solid var(--queued);outline-offset:2px}
+input,textarea,select{width:100%;border:1px solid var(--line);border-radius:var(--r);padding:7px 9px;background:#fff}
+textarea{min-height:90px;resize:vertical}
+label{display:block;font-size:13px;color:var(--ink2);margin:10px 0 4px}
+.app{display:grid;grid-template-columns:270px 1fr;min-height:100vh}
+aside{background:var(--ink);color:#DCE3EA;padding:18px 14px;display:flex;flex-direction:column;gap:14px}
+aside h1{font-size:22px;color:#fff;letter-spacing:.01em}
+aside .nav button{width:100%;text-align:left;background:transparent;color:inherit;border:0;padding:8px 10px}
+aside .nav button.on{background:#2B3947;color:#fff}
+.studies{display:flex;flex-direction:column;gap:2px;overflow:auto}
+.study-item{background:transparent;border:0;color:inherit;text-align:left;padding:9px 10px;border-radius:var(--r)}
+.study-item.on{background:#2B3947;color:#fff}
+.agents{margin-top:auto;border-top:1px solid #2B3947;padding-top:12px;font-size:13px;display:flex;flex-direction:column;gap:8px}
+.agent{display:grid;grid-template-columns:10px 1fr;gap:2px 8px;align-items:baseline}
+.agent i{width:8px;height:8px;border-radius:50%;background:var(--c)}
+.agent small{grid-column:2;color:#93A2B1;overflow-wrap:anywhere}
+.version{color:#6B7B8B;font-size:12px}
+.guide-link{color:#DCE3EA;font-size:13px}
+.study-item small{display:block;color:#93A2B1;font-size:12px}
+main{padding:26px 34px;max-width:1200px}
+/* the contour strip: one cell per job, coloured by status */
+.strip{display:flex;height:22px;border:1px solid var(--line);border-radius:var(--r);overflow:hidden;background:var(--panel)}
+.strip span{flex:1;min-width:3px;border-right:1px solid rgba(255,255,255,.5)}
+.strip.mini{height:6px;border:0;margin-top:5px;background:#2B3947}
+.legend{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:var(--ink2);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+.head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;margin-bottom:18px}
+.head h2{font-size:30px;line-height:1.1}
+.cols{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin:20px 0}
+.box{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:14px 16px}
+.box h3{font-size:17px;margin-bottom:6px}
+.prose{white-space:pre-wrap;color:var(--ink);max-width:70ch}
+.muted{color:var(--ink2)}
+table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}
+th,td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-weight:500;color:var(--ink2);font-size:13px;background:#F6F8FA}
+tr.click:hover{background:#F3F6F9;cursor:pointer}
+.pill{display:inline-flex;align-items:center;gap:6px;font-size:13px}
+.pill::before{content:"";width:9px;height:9px;border-radius:50%;background:var(--c)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.section-title{display:flex;justify-content:space-between;align-items:center;margin:26px 0 10px}
+.section-title h3{font-size:19px}
+code,.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px}
+pre{background:#F6F8FA;border:1px solid var(--line);padding:10px;border-radius:var(--r);overflow:auto;font-size:13px;margin:0}
+/* drawer */
+.drawer{position:fixed;inset:0 0 0 auto;width:min(660px,100%);background:var(--panel);border-left:1px solid var(--line);
+  box-shadow:-12px 0 30px rgba(27,39,51,.12);padding:22px;overflow:auto;transform:translateX(100%);visibility:hidden;transition:transform .2s,visibility .2s}
+.drawer.open{transform:none;visibility:visible}
+.result{border-top:1px solid var(--line);padding:12px 0}
+.step{border:1px solid var(--line);border-left:4px solid var(--c);border-radius:var(--r);padding:12px 14px;margin-top:14px}
+.step h3{font-size:17px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:4px 10px;font-size:14px;margin:8px 0}
+.kv dt{color:var(--ink2)} .kv dd{margin:0;word-break:break-all}
+dialog{border:1px solid var(--line);border-radius:var(--r);padding:20px;width:min(520px,94vw)}
+dialog::backdrop{background:rgba(27,39,51,.35)}
+.empty{padding:28px;text-align:center;color:var(--ink2);background:var(--panel);border:1px dashed var(--line);border-radius:var(--r)}
+.counts{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin:14px 0 20px}
+.counts div{background:var(--panel);border:1px solid var(--line);border-top:4px solid var(--c);padding:10px 12px}
+.counts b{display:block;font-size:26px;font-family:"Barlow Semi Condensed"}
+@media (max-width:860px){.app{grid-template-columns:1fr}.cols{grid-template-columns:1fr}main{padding:18px}.counts{grid-template-columns:repeat(2,1fr)}}
+@media (prefers-reduced-motion:reduce){.drawer{transition:none}}
+.setup{display:grid;grid-template-columns:150px 1fr;gap:6px 14px;margin:6px 0 0;font-size:14px}
+.setup dt{color:var(--ink2)} .setup dd{margin:0} .setup code{display:block;white-space:pre-wrap;word-break:break-all}
+fieldset{border:1px solid var(--line);border-radius:var(--r);padding:4px 14px 12px;margin:14px 0 0}
+legend{color:var(--ink2);font-size:13px;padding:0 6px}
+details.override summary{cursor:pointer;margin-top:14px;color:var(--ink2)}
+.check{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:14px;color:var(--ink)} .check input{width:auto}
+.hint{font-size:12.5px;color:var(--ink2);margin-top:3px}
+dialog{width:min(640px,94vw);max-height:92vh}
+.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:14px 0 0}
+.tabs button{border:1px solid var(--line);border-bottom:0;border-radius:var(--r) var(--r) 0 0;background:var(--paper);display:inline-flex;align-items:center;gap:7px}
+.tabs button.on{background:var(--panel);font-weight:600;position:relative;top:1px}
+.tabs button i{width:8px;height:8px;border-radius:50%}
+.attempt{border:1px solid var(--line);border-top:0;padding:4px 14px 14px;background:var(--panel)}
+table.compact{font-size:13.5px} table.compact td,table.compact th{padding:5px 8px}
+.changed{color:#9A6B00;font-weight:600}
+.note-cell{max-width:170px;min-width:110px}
+.badge{background:#E3E8EE;border-radius:3px;padding:1px 6px;font-size:12.5px;font-weight:600}
+.note-line{margin:10px 0 0;font-style:italic}
+.result.old{opacity:.75}
+.linkish{border:0;background:none;color:var(--queued);padding:6px 0;text-decoration:underline}
+a.button{display:inline-block;border:1px solid var(--line);background:var(--panel);padding:6px 12px;border-radius:var(--r);color:inherit;text-decoration:none}
+a.button:hover{border-color:var(--ink2)}
+button:disabled{opacity:.5;cursor:not-allowed}
+.rev{border-top:1px solid var(--line);padding:10px 0}
+#historyDlg{width:min(720px,94vw)}
+/* ---------- Notebook ---------- */
+.nb-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);padding:12px 14px;margin-bottom:10px;cursor:pointer}
+.nb-card:hover{border-color:var(--ink2)}
+.nb-card h4{font-size:16px;margin-bottom:3px}
+.nb-tag{background:#E3E8EE;border-radius:12px;padding:1px 9px;font-size:12px;color:var(--ink2)}
+.nb-toolbar{display:flex;gap:4px;flex-wrap:wrap;margin-bottom:6px}
+.nb-toolbar button{padding:5px 9px;font-size:13px}
+.nb-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.nb-grid textarea{min-height:420px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13.5px;resize:vertical}
+.nb-preview{border:1px solid var(--line);border-radius:var(--r);padding:10px 14px;background:#fff;overflow:auto;min-height:420px}
+.nb-preview table{margin:10px 0}
+.nb-preview img{max-width:100%;height:auto;cursor:zoom-in}
+.nb-preview pre{max-width:100%}
+.nb-preview :first-child{margin-top:0}
+.nbref{color:var(--queued);text-decoration:underline;cursor:pointer}
+.nbref-missing{color:var(--failed);font-style:italic;cursor:default}
+.nb-drop{outline:2px dashed var(--queued)}
+.nb-row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px}
+.nb-row>div{flex:1;min-width:140px}
+.nb-row label{margin:0 0 4px}
+.nb-findings .nb-finding{padding:6px 0;border-top:1px solid var(--line)}
+.nb-findings .nb-finding:first-child{border-top:0}
+.nb-image-pick{display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--line);cursor:pointer}
+.nb-image-pick:hover{background:#F3F6F9}
+.nb-image-pick .muted{margin-left:auto;white-space:nowrap}
+.nb-thumb{width:40px;height:40px;object-fit:cover;border:1px solid var(--line);border-radius:var(--r);background:#F6F8FA;flex:none}
+@media (max-width:860px){.nb-grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="app">
+  <aside>
+    <h1>FEM Tracker</h1>
+    <div class="nav">
+      <button id="navStudies" class="on" onclick="showView('study')">Studies</button>
+      <button id="navQueue" onclick="showView('queue')">Queues</button>
+      <button id="navClasses" onclick="showView('classes')">Study classes</button>
+    </div>
+    <button class="primary" style="background:#fff;color:var(--ink)" onclick="openStudyDialog()">New study</button>
+    <div class="studies" id="studyList"></div>
+    <div class="agents" id="agents" aria-live="polite"></div>
+  </aside>
+  <main id="main"></main>
+</div>
+
+<div class="drawer" id="drawer" aria-hidden="true"></div>
+
+<dialog id="studyDlg">
+  <h3 id="studyDlgTitle">New study</h3>
+  <label for="sName">Name</label><input id="sName" placeholder="Bracket topology sweep">
+  <label for="sClass">Study class</label><select id="sClass"><option value="">No class</option></select>
+  <div class="hint">A class defines the KPIs this study is expected to report, so results compare consistently. Manage classes from <b>Study classes</b> in the sidebar.</div>
+  <label for="sRunType">Run type</label><select id="sRunType" onchange="renderStudySetupSection()"><option value="">No run type</option></select>
+  <div class="hint">The solver or script this study runs: Abaqus, LS-DYNA, a shell pipeline, etc. Leave a run setup field below empty to use the run type's setting. Manage run types from <b>Run types</b> in the sidebar.</div>
+  <label for="sDesc">Description</label><textarea id="sDesc" placeholder="Goal, geometry, load cases, acceptance criteria"></textarea>
+  <label for="sSum">Study results</label><textarea id="sSum" placeholder="Conclusions across all runs"></textarea>
+  <fieldset><legend>Run setup, shared by every job in the study</legend><div id="sSetup"></div></fieldset>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button onclick="studyDlg.close()">Cancel</button><button class="primary" onclick="saveStudy()">Save study</button>
+  </div>
+</dialog>
+
+<dialog id="classDlg">
+  <h3>New study class</h3>
+  <label for="clName">Name</label><input id="clName" placeholder="Static Strength">
+  <label for="clParent">Parent class (optional)</label><select id="clParent"><option value="">No parent</option></select>
+  <div class="hint">Inherits its parent's KPIs. Define a KPI here with the same metric key to override one.</div>
+  <label for="clDesc">Description</label><textarea id="clDesc" placeholder="What kind of study this is for"></textarea>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button onclick="classDlg.close()">Cancel</button><button class="primary" onclick="saveNewClass()">Create</button>
+  </div>
+</dialog>
+
+<dialog id="jobDlg">
+  <h3>Queue a job</h3>
+  <div class="row" style="flex-wrap:nowrap">
+    <div style="flex:3"><label for="jName">Name</label><input id="jName" placeholder="mesh_2mm_caseA"></div>
+    <div style="flex:1"><label for="jPrio">Priority</label><input id="jPrio" type="number" value="0"></div>
+  </div>
+  <div class="hint">Also the Abaqus job name via {job_name}; spaces and symbols become underscores.</div>
+  <label for="jDesc">Description</label><textarea id="jDesc" style="min-height:60px"></textarea>
+  <label for="jParams">Parameters (JSON)</label>
+  <textarea id="jParams" class="mono" style="min-height:70px">{"mesh_size_mm": 2, "load_N": 1500, "cpus": 16}</textarea>
+  <div class="hint">Uploaded as job_params.json for your pre-processing script, and usable in commands as {mesh_size_mm}, {cpus}…</div>
+  <details class="override"><summary>Override the study run setup for this job</summary>
+    <div class="hint">Leave a field empty to use the study's setting.</div><div id="jSetup"></div></details>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button onclick="jobDlg.close()">Cancel</button><button class="primary" onclick="saveJob()">Add to queue</button>
+  </div>
+</dialog>
+<dialog id="againDlg">
+  <h3>Run again</h3>
+  <p class="muted" style="margin:4px 0 0">Makes a new attempt. Earlier attempts, their files and results stay exactly as they are.</p>
+  <label for="aNote">Why are you running it again?</label>
+  <input id="aNote" placeholder="Refined mesh at the fillet; fixed the boundary condition">
+  <label for="aParams">Parameters for the new attempt (JSON)</label>
+  <textarea id="aParams" class="mono" style="min-height:110px"></textarea>
+  <div class="hint">The study's current run setup and your input folder's current files are used and recorded.</div>
+  <div class="row" style="justify-content:flex-end;margin-top:14px"><span id="aMsg" class="muted" style="margin-right:auto"></span>
+    <button onclick="againDlg.close()">Cancel</button><button class="primary" onclick="saveAgain()">Queue attempt</button></div>
+</dialog>
+
+<dialog id="historyDlg">
+  <div class="head" style="margin-bottom:8px"><h3>Study history</h3><button onclick="historyDlg.close()">Close</button></div>
+  <div class="tabs" id="hTabs"></div>
+  <div id="hList"></div>
+</dialog>
+
+<dialog id="nbImageDlg">
+  <div class="head" style="margin-bottom:8px"><h3>Insert an existing image</h3><button onclick="nbImageDlg.close()">Close</button></div>
+  <p class="muted" style="margin:0 0 8px">Results already in the database. No second copy is stored.</p>
+  <div id="nbImageList" style="max-height:60vh;overflow:auto"></div>
+</dialog>
+
+<dialog id="nbRefDlg">
+  <h3>Insert a link</h3>
+  <label for="nbRefKind">Links to</label>
+  <select id="nbRefKind" onchange="renderRefFields()">
+    <option value="job">A job</option><option value="attempt">An attempt</option>
+    <option value="result">A result</option><option value="metrics">A job's metrics table</option>
+    <option value="git">A git commit</option>
+  </select>
+  <div id="nbRefFields"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button onclick="nbRefDlg.close()">Cancel</button><button class="primary" onclick="insertRef()">Insert</button>
+  </div>
+</dialog>
+
+<dialog id="nbHistoryDlg">
+  <div class="head" style="margin-bottom:8px"><h3>Entry history</h3><button onclick="nbHistoryDlg.close()">Close</button></div>
+  <p class="muted" style="margin:0 0 8px">Pick any two saved versions to compare.</p>
+  <div id="nbHistoryList"></div>
+  <div id="nbHistoryCompare" class="nb-grid" style="margin-top:14px"></div>
+</dialog>
+
+<input type="file" id="nbFilePick" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange="nbFilePicked()">
+<input type="file" id="nbFolderPick" webkitdirectory multiple style="display:none" onchange="nbFolderPicked()">
+<script>
+const STAGES={queued:"queued",on_cluster:"on HPC",awaiting_population:"awaiting population",populated:"populated",failed:"failed",cancelled:"cancelled"};
+const RUN_C={queued:"queued",submitting:"on_cluster",submitted:"on_cluster",running:"on_cluster",finished:"populated",failed:"failed",cancelled:"cancelled"};
+const POP_C={pending:"awaiting_population",populating:"on_cluster",done:"populated",failed:"failed",skipped:"cancelled"};
+const EXAMPLE_SETUP={local_dir:"",inputs:["*.py","*.inp"],remote_inputs:[],
+  commands:["abaqus python Pre_Processing.py","abaqus j={job_name} cpus={cpus} -queue normal:wait:ppn16 double=both ask=no","abaqus python Post_Processing.py"],
+  retrieve:["Post_Results.txt"],cleanup:true,cancel_commands:[]};
+const BLANK_SETUP={local_dir:"",inputs:[],remote_inputs:[],commands:[],retrieve:[],cleanup:false,cancel_commands:[]};
+const S={studies:[],studyId:null,view:"study",jobId:null,editingStudy:null,showScript:false,attempt:null,compare:false,showOld:false,
+  studyTab:"jobs",nbKind:"",nbQ:"",nbIncludeArchived:false,nbEntry:null,nbDirty:false,nbHistorySel:[],classId:null};
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmtT=t=>t?new Date(t).toLocaleString([], {dateStyle:"short",timeStyle:"short"}):"—";
+const fmtB=n=>n==null?"—":n===0?"0 B":n<1024?n+" B":n<1048576?(n/1024).toFixed(1)+" KB":n<1073741824?(n/1048576).toFixed(1)+" MB":(n/1073741824).toFixed(2)+" GB";
+const pill=(label,colour)=>`<span class="pill" style="--c:var(--${colour})">${esc(label)}</span>`;
+const stagePill=st=>pill(STAGES[st],st);
+const onHPC=j=>["submitting","submitted","running"].includes(j.run_status);
+const runPill=j=>pill(j.run_status+(j.cancel_requested&&onHPC(j)?" (cancelling)":""),RUN_C[j.run_status]);
+const popPill=j=>j.run_status!=="finished"?'<span class="muted">—</span>':pill(j.populate_status,POP_C[j.populate_status]);
+function dur(a,b){if(!a)return"—";const s=Math.round(((b?new Date(b):new Date())-new Date(a))/1000);
+  return s<60?s+"s":s<3600?Math.round(s/60)+"m":(s/3600).toFixed(1)+"h"}
+const lines=t=>t.split("\n").map(x=>x.trim()).filter(Boolean);
+
+async function api(path,opts={}){
+  const r=await fetch(path,opts);if(r.status===204)return null;
+  const d=await r.json().catch(()=>({}));
+  if(!r.ok)throw new Error(d.detail?(typeof d.detail==="string"?d.detail:JSON.stringify(d.detail)):r.statusText);
+  return d;
+}
+const jsonOpts=(method,body)=>({method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
+async function act(fn){try{await fn()}catch(e){alert(e.message)}if(S.jobId)await renderDrawer();render()}
+
+/* ---------- Run setup form (study + job override) ---------- */
+function setupForm(p,cfg,override){
+  const v=k=>override?"":(Array.isArray(cfg[k])?cfg[k].join("\n"):cfg[k]??"");
+  const ph=k=>override?(Array.isArray(cfg[k])?cfg[k].join("\n"):cfg[k])||"":"";
+  return `
+    <label for="${p}local">Local input folder (on this PC)</label><input id="${p}local" class="mono" value="${esc(v("local_dir"))}" placeholder="${esc(ph("local_dir")||"C:\\FEM\\Bracket")}">
+    <label for="${p}inputs">Files to upload, one per line</label><textarea id="${p}inputs" class="mono" style="min-height:56px" placeholder="${esc(ph("inputs")||"*.inp")}">${esc(v("inputs"))}</textarea>
+    <div class="hint">Names or wildcards relative to the local folder, like the .bat builder's upload list.</div>
+    <label for="${p}rinputs">Files already on the HPC, one per line (optional)</label><textarea id="${p}rinputs" class="mono" style="min-height:44px" placeholder="${esc(ph("remote_inputs")||"/scratch/shared/mesh_template.inp")}">${esc(v("remote_inputs"))}</textarea>
+    <div class="hint">Absolute paths on the HPC, e.g. a large shared mesh on scratch. Symlinked into the job's folder and hashed for provenance instead of being uploaded.</div>
+    <label for="${p}cmds">Commands to run on the HPC, one per line</label><textarea id="${p}cmds" class="mono" placeholder="${esc(ph("commands"))}">${esc(v("commands"))}</textarea>
+    <div class="hint">Chained with &amp;&amp;, so a failing command stops the run. Submit in the foreground (<code>interactive</code> or a <code>:wait</code> queue) so the job stays in its tmux session until the solver ends. Placeholders: {job_name}, {job_id} and any parameter.</div>
+    <label for="${p}retr">Files to bring back when populating, one per line</label><textarea id="${p}retr" class="mono" style="min-height:56px" placeholder="${esc(ph("retrieve")||"Post_Results.txt")}">${esc(v("retrieve"))}</textarea>
+    <label for="${p}cancel">Extra commands when cancelling (optional)</label><textarea id="${p}cancel" class="mono" style="min-height:44px" placeholder="${esc(ph("cancel_commands")||"abaqus terminate job={job_name}")}">${esc(v("cancel_commands"))}</textarea>
+    ${override?`<label for="${p}clean">Delete remote folder after population</label>
+      <select id="${p}clean"><option value="">Use study setting (${cfg.cleanup?"yes":"no"})</option><option value="1">Yes</option><option value="0">No</option></select>`
+    :`<label class="check"><input type="checkbox" id="${p}clean" ${cfg.cleanup?"checked":""}> Delete the remote run folder once its results are populated</label>`}`;
+}
+function readSetup(p,override){
+  const out={local_dir:$(p+"local").value.trim(),inputs:lines($(p+"inputs").value),remote_inputs:lines($(p+"rinputs").value),
+    commands:lines($(p+"cmds").value),retrieve:lines($(p+"retr").value),cancel_commands:lines($(p+"cancel").value)};
+  if(!override){out.cleanup=$(p+"clean").checked;return out}
+  const o={};for(const[k,v]of Object.entries(out))if(Array.isArray(v)?v.length:v)o[k]=v;
+  if($(p+"clean").value)o.cleanup=$(p+"clean").value==="1";
+  return o;
+}
+function setupView(cfg){
+  const list=a=>a&&a.length?`<code>${esc(a.join("\n"))}</code>`:'<span class="muted">none</span>';
+  return `<dl class="setup">
+    <dt>Local input folder</dt><dd class="mono">${esc(cfg.local_dir)||'<span class="muted">agent working folder</span>'}</dd>
+    <dt>Upload</dt><dd>${list(cfg.inputs)}</dd>
+    ${cfg.remote_inputs?.length?`<dt>Already on the HPC</dt><dd>${list(cfg.remote_inputs)}</dd>`:""}
+    <dt>Run on HPC</dt><dd>${list(cfg.commands)}</dd>
+    <dt>Bring back</dt><dd>${list(cfg.retrieve)}</dd>
+    <dt>Remote folder</dt><dd>${cfg.cleanup?"deleted after population":"kept"}</dd>
+    ${cfg.cancel_commands?.length?`<dt>On cancel</dt><dd>${list(cfg.cancel_commands)}</dd>`:""}</dl>`;
+}
+
+/* ---------- Overview ---------- */
+function strip(items,mini=false){
+  if(!items.length)return mini?"":`<div class="strip"></div>`;
+  return `<div class="strip${mini?" mini":""}" role="img" aria-label="Job pipeline overview">`+
+    items.map(j=>`<span style="background:var(--${j.stage})" title="${j.id?`#${j.id} ${esc(j.name)}: `:""}${STAGES[j.stage]}"></span>`).join("")+`</div>`;
+}
+const countStrip=s=>strip(Object.keys(STAGES).flatMap(k=>Array(s[k]||0).fill({stage:k})),true);
+const legend=()=>`<div class="legend">${Object.entries(STAGES).map(([k,v])=>`<span><i style="background:var(--${k})"></i>${v}</span>`).join("")}</div>`;
+
+const ROLE={run:"Run agent",populate:"Populate agent"};
+function agentLine(a){
+  const [c,txt]=a.stale?["cancelled","not running"]:{ok:["populated","connected"],not_configured:["awaiting_population","not set up"],
+    error:["failed","can't reach the HPC"],stopped:["cancelled","stopped"]}[a.state]||["cancelled",a.state];
+  const hint=a.stale?"Start FEM Tracker to run it.":a.state==="not_configured"?`Open Start menu › FEM Tracker settings. ${a.message}`:a.message;
+  return `<div class="agent" style="--c:var(--${c})"><i></i><span>${ROLE[a.role]||a.role}: ${txt}</span>${hint?`<small title="${esc(a.message)}">${esc(hint.length>140?hint.slice(0,140)+"…":hint)}</small>`:""}</div>`;
+}
+async function loadAgents(){
+  try{
+    const [ag,h]=await Promise.all([api("/api/agents"),S.version?null:api("/api/health")]);
+    if(h)S.version=h.version;
+    $("agents").innerHTML=(ag.length?ag.map(agentLine).join(""):`<div class="agent" style="--c:var(--cancelled)"><i></i><span>No HPC agents running</span><small>Jobs wait in the queue until FEM Tracker is started with its agents.</small></div>`)
+      +`<a class="guide-link" href="/static/guide.html" target="_blank" rel="noopener">User guide</a><div class="version">FEM Tracker ${esc(S.version||"")}</div>`;
+  }catch{}
+}
+async function loadStudies(){
+  loadAgents();
+  S.studies=await api("/api/studies");
+  if(S.studyId==null&&S.studies.length)S.studyId=S.studies[0].id;
+  $("studyList").innerHTML=S.studies.map(s=>`
+    <button class="study-item ${s.id===S.studyId&&S.view==="study"?"on":""}" onclick="pickStudy(${s.id})">
+      ${esc(s.name)}<small>${s.job_count} jobs · ${s.populated||0} populated${s.failed?` · ${s.failed} failed`:""}</small>${countStrip(s)}
+    </button>`).join("")||`<p style="color:#93A2B1;font-size:13px">No studies yet.</p>`;
+}
+function showView(v){
+  if(S.nbDirty&&!confirmDiscardNotebookEdits())return;
+  S.nbDirty=false;S.nbEntry=null;
+  S.view=v;$("navStudies").classList.toggle("on",v==="study");$("navQueue").classList.toggle("on",v==="queue");
+  $("navClasses").classList.toggle("on",v==="classes");render();
+}
+function pickStudy(id){if(S.nbDirty&&!confirmDiscardNotebookEdits())return;S.nbDirty=false;S.nbEntry=null;S.studyId=id;showView("study")}
+window.addEventListener("beforeunload",e=>{if(S.nbDirty){e.preventDefault();e.returnValue=""}});
+
+async function render(){
+  await loadStudies();
+  if(S.view==="queue")return renderQueue();
+  if(S.view==="classes")return renderClasses();
+  const m=$("main");
+  if(!S.studyId){m.innerHTML=`<div class="empty"><h3>Start with a study</h3><p>A study groups related runs, like a mesh convergence check or a design sweep, and holds the commands they run on the HPC.</p><button class="primary" onclick="openStudyDialog()">New study</button></div>`;return}
+  const [s,jobs,findings,kpis]=await Promise.all([api(`/api/studies/${S.studyId}`),api(`/api/jobs?study_id=${S.studyId}`),
+    api(`/api/studies/${S.studyId}/notebook?kind=finding`),api(`/api/studies/${S.studyId}/kpis`)]);
+  const cfg={...BLANK_SETUP,...s.run_config};
+  m.innerHTML=`
+    <div class="head">
+      <div><h2>${esc(s.name)}</h2><div class="muted">Created ${fmtT(s.created_at)}, updated ${fmtT(s.updated_at)}</div></div>
+      <div class="row"><button onclick="openHistory()">History</button><a class="button" href="/api/studies/${s.id}/export" download>Export</a>
+        <button onclick="openStudyDialog(true)">Edit study</button><button class="danger" onclick="deleteStudy()">Delete</button></div>
+    </div>
+    ${strip([...jobs].reverse())}${legend()}
+    <div class="cols">
+      <div class="box"><h3>Description</h3><div class="prose">${esc(s.description)||'<span class="muted">No description yet.</span>'}</div></div>
+      <div class="box"><h3>Study results</h3><div class="prose">${esc(s.results_summary)||'<span class="muted">Record conclusions here once runs are populated.</span>'}</div>
+        ${findings.length?`<div class="nb-findings" style="margin-top:12px"><h4 style="font-size:14px;color:var(--ink2);margin-bottom:4px">Findings</h4>
+          ${findings.map(f=>`<div class="nb-finding"><a href="#" onclick="event.preventDefault();openNotebookEntry(${f.id})">${esc(f.title)}</a>
+            <span class="muted"> — ${fmtT(f.updated_at)}</span></div>`).join("")}</div>`:""}</div>
+    </div>
+    <div class="box"><h3>Run setup</h3>${cfg.commands.length?setupView(cfg):`<p class="muted">No commands yet. Edit the study to say what runs on the HPC.</p>`}
+      <p class="hint" style="margin:8px 0 0">Each attempt keeps a frozen copy of the setup it ran with, so editing this doesn't change past results.</p></div>
+    ${s.class_id?kpiBox(s,jobs,kpis):""}
+    <div class="tabs" role="tablist" style="margin-top:22px">
+      <button role="tab" aria-selected="${S.studyTab==="jobs"}" class="${S.studyTab==="jobs"?"on":""}" onclick="showStudyTab('jobs')">Jobs</button>
+      <button role="tab" aria-selected="${S.studyTab==="notebook"}" class="${S.studyTab==="notebook"?"on":""}" onclick="showStudyTab('notebook')">Notebook</button>
+    </div>
+    <div class="attempt" id="studyBody"></div>`;
+  await renderStudyBody(jobs);
+}
+
+function showStudyTab(tab){
+  if(S.studyTab==="notebook"&&S.nbDirty&&!confirmDiscardNotebookEdits())return;
+  S.studyTab=tab;S.nbEntry=null;S.nbDirty=false;render();
+}
+
+async function renderStudyBody(jobs){
+  const body=$("studyBody");
+  if(S.studyTab==="jobs"){
+    const metrics=await api(`/api/studies/${S.studyId}/metrics`);
+    body.innerHTML=`
+      <div class="section-title" style="margin-top:4px"><h3>Jobs</h3><button class="primary" onclick="openJobDialog()">Queue a job</button></div>
+      ${jobs.length?`<div style="overflow:auto"><table><thead><tr><th>#</th><th>Name</th><th>Attempt</th><th>Run</th><th>Population</th><th>Priority</th><th>Submitted</th><th>Run time</th><th>Results</th></tr></thead><tbody>
+        ${jobs.map(j=>`<tr class="click" tabindex="0" onclick="openJob(${j.id})" onkeydown="if(event.key==='Enter')openJob(${j.id})">
+          <td>${j.id}</td><td>${esc(j.name)}${Object.keys(j.run_config||{}).length?' <span class="muted" title="Overrides the study run setup">*</span>':""}</td>
+          <td>${j.attempt_number?`${j.attempt_number}${j.attempt_count>1?` <span class="muted">of ${j.attempt_count}</span>`:""}`:"—"}</td>
+          <td>${j.run_status?runPill(j):"—"}</td><td>${j.run_status?popPill(j):"—"}</td><td>${j.priority}</td>
+          <td>${fmtT(j.submitted_at)}</td><td>${dur(j.started_at,j.finished_at)}</td><td>${j.result_count}</td></tr>`).join("")}
+        </tbody></table></div>`:`<div class="empty">No jobs in this study. Queue one and the run agent will start it on the HPC.</div>`}
+      ${metricsTable(metrics)}`;
+  }else{
+    await renderNotebook();
+  }
+}
+
+function fmtNum(x){return typeof x==="number"?(Math.abs(x)>=1e4||(Math.abs(x)<1e-3&&x!==0)?x.toExponential(3):+x.toFixed(4)):esc(JSON.stringify(x))}
+function metricsTable(rows){
+  rows=rows.filter(r=>Object.keys(r.metrics||{}).length);
+  const keys=[...new Set(rows.flatMap(r=>Object.keys(r.metrics)))];
+  if(!keys.length)return"";
+  return `<div class="section-title"><h3>Compare metrics</h3><span class="muted">Latest populated attempt of each job, plus results added by hand</span></div>
+    <div style="overflow:auto"><table><thead><tr><th>Job</th><th>Attempt</th><th>Result</th>${keys.map(k=>`<th>${esc(k)}</th>`).join("")}</tr></thead><tbody>
+    ${rows.map(r=>`<tr class="click" onclick="openJob(${r.job_id})"><td>#${r.job_id} ${esc(r.job_name)}</td>
+      <td>${r.attempt_number??'<span class="muted">by hand</span>'}</td><td>${esc(r.result_name)}</td>
+      ${keys.map(k=>`<td>${k in r.metrics?fmtNum(r.metrics[k]):"—"}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function kpiBox(s,jobs,kpis){
+  return `<div class="box"><h3>KPIs <span class="muted">(${esc(s.class_name)})</span></h3>
+    <table class="compact"><thead><tr><th>KPI</th><th>Value</th><th>From job</th></tr></thead><tbody>
+    ${kpis.map(k=>`<tr>
+      <td>${esc(k.name)}${k.inherited?` <span class="muted" title="Inherited from ${esc(k.source_class_name)}">*</span>`:""}</td>
+      <td>${!k.job_id?'<span class="muted">not pinned</span>':k.value==null?
+        `<span class="muted" title="Job #${k.job_id} has no current result for &quot;${esc(k.metric_key)}&quot;">not reported</span>`:
+        `${fmtNum(k.value)}${k.unit?" "+esc(k.unit):""}`}</td>
+      <td><select onchange="pinKpi(${k.id},this.value)">
+        <option value="">— pick a job —</option>
+        ${jobs.map(j=>`<option value="${j.id}"${k.job_id===j.id?" selected":""}>#${j.id} ${esc(j.name)}</option>`).join("")}
+      </select></td>
+    </tr>`).join("")}
+    </tbody></table>
+    ${kpis.length?"":`<p class="muted">This class has no KPIs defined yet. Add some from <b>Study classes</b> in the sidebar.</p>`}
+  </div>`;
+}
+async function pinKpi(kid,jobId){
+  if(!jobId)await api(`/api/studies/${S.studyId}/kpis/${kid}`,{method:"DELETE"});
+  else await api(`/api/studies/${S.studyId}/kpis/${kid}`,jsonOpts("PUT",{job_id:+jobId}));
+  render();
+}
+
+const attemptLabel=a=>`${esc(a.job_name)} <span class="muted">attempt ${a.number}</span>`;
+async function renderQueue(){
+  const q=await api("/api/queue");
+  let pos=0;
+  $("main").innerHTML=`
+    <div class="head"><div><h2>Queues</h2><div class="muted">Runs and population are separate steps with their own queues.</div></div></div>
+    <div class="counts">${Object.entries(STAGES).map(([k,v])=>`<div style="--c:var(--${k})"><b>${q.stages[k]}</b>${v}</div>`).join("")}</div>
+    <div class="section-title"><h3>1. Run queue</h3><span class="muted">The run agent starts the highest priority job first, then the oldest.</span></div>
+    ${q.run_queue.length?`<div style="overflow:auto"><table><thead><tr><th>Position</th><th>Job</th><th>Study</th><th>Run</th><th>Priority</th><th>tmux session</th><th>Waiting / running</th><th></th></tr></thead><tbody>
+    ${q.run_queue.map(a=>`<tr><td>${a.run_status==="queued"?++pos:"—"}</td>
+      <td><a href="#" onclick="event.preventDefault();openJob(${a.job_id})">${attemptLabel(a)}</a></td><td>${esc(a.study_name)}</td>
+      <td>${runPill(a)}</td><td>${a.run_status==="queued"?`
+        <button aria-label="Raise priority" onclick="bump(${a.job_id},${a.priority+1})">+</button> ${a.priority}
+        <button aria-label="Lower priority" onclick="bump(${a.job_id},${a.priority-1})">−</button>`:a.priority}</td>
+      <td class="mono">${esc(a.session_name&&a.run_status!=="queued"?a.session_name:"")||"—"}</td>
+      <td>${a.run_status==="running"?dur(a.started_at):fmtT(a.submitted_at||a.queued_at)}</td>
+      <td>${a.cancel_requested?"":`<button class="danger" onclick="act(()=>cancelAttempt(${a.id}))">Cancel</button>`}</td></tr>`).join("")}
+    </tbody></table></div>`:`<div class="empty">Nothing waiting to run.</div>`}
+    <div class="section-title"><h3>2. Population queue</h3><span class="muted">Finished runs waiting to come back into the database.</span></div>
+    ${q.populate_queue.length?`<div style="overflow:auto"><table><thead><tr><th>Job</th><th>Study</th><th>Population</th><th>Run finished</th><th>Remote folder</th><th></th></tr></thead><tbody>
+    ${q.populate_queue.map(a=>`<tr><td><a href="#" onclick="event.preventDefault();openJob(${a.job_id})">${attemptLabel(a)}</a></td>
+      <td>${esc(a.study_name)}</td><td>${popPill(a)}</td><td>${fmtT(a.finished_at)}</td><td class="mono">${esc(a.run_dir)||"—"}</td>
+      <td>${a.populate_status==="failed"?`<button onclick="act(()=>setPop(${a.id},'pending'))">Retry</button>`:""}</td></tr>`).join("")}
+    </tbody></table></div>`:`<div class="empty">Every finished run has been populated.</div>`}`;
+}
+const bump=(jid,p)=>act(()=>api(`/api/jobs/${jid}`,jsonOpts("PATCH",{priority:p})));
+const setPop=(aid,populate_status)=>api(`/api/attempts/${aid}/populate`,jsonOpts("POST",{populate_status}));
+const cancelAttempt=aid=>api(`/api/attempts/${aid}/cancel`,{method:"POST"});
+
+/* ---------- Study classes: reusable KPI templates ---------- */
+async function renderClasses(){
+  if(S.classId)return renderClassEditor();
+  const classes=await api("/api/study-classes");
+  $("main").innerHTML=`
+    <div class="head"><div><h2>Study classes</h2><div class="muted">Reusable KPI templates, so studies of the same kind report results the same way.</div></div>
+      <button class="primary" onclick="openClassDialog()">New class</button></div>
+    ${classes.length?classes.map(c=>`
+      <div class="nb-card" tabindex="0" onclick="openClassEditor(${c.id})" onkeydown="if(event.key==='Enter')openClassEditor(${c.id})">
+        <h4>${esc(c.name)}${c.parent_name?` <span class="muted" style="font-weight:400">extends ${esc(c.parent_name)}</span>`:""}</h4>
+        <div class="muted">${c.effective_kpis.length} KPI${c.effective_kpis.length===1?"":"s"}${c.kpis.length!==c.effective_kpis.length?` (${c.kpis.length} own)`:""} · used by ${c.study_count} stud${c.study_count===1?"y":"ies"}</div>
+        ${c.description?`<div class="prose" style="margin-top:4px">${esc(c.description)}</div>`:""}
+      </div>`).join(""):`<div class="empty">No study classes yet. Create one to define a standard set of KPIs for a kind of study.</div>`}`;
+}
+async function openClassDialog(){
+  $("clName").value="";$("clDesc").value="";
+  const classes=await api("/api/study-classes");
+  $("clParent").innerHTML=`<option value="">No parent</option>`+classes.map(c=>`<option value="${c.id}">${esc(c.name)}</option>`).join("");
+  classDlg.showModal();
+}
+async function saveNewClass(){
+  const name=$("clName").value.trim();if(!name)return $("clName").focus();
+  const parent_id=$("clParent").value?+$("clParent").value:null;
+  try{
+    const c=await api("/api/study-classes",jsonOpts("POST",{name,description:$("clDesc").value,parent_id}));
+    classDlg.close();S.classId=c.id;render();
+  }catch(e){alert(e.message)}
+}
+function openClassEditor(id){S.classId=id;render()}
+function closeClassEditor(){S.classId=null;render()}
+async function renderClassEditor(){
+  const [c,all]=await Promise.all([api(`/api/study-classes/${S.classId}`),api("/api/study-classes")]);
+  const parentOptions=all.filter(x=>x.id!==c.id);
+  $("main").innerHTML=`
+    <div class="head"><div><h2>${esc(c.name)}</h2>
+      <div class="muted">${c.study_count} stud${c.study_count===1?"y uses":"ies use"} this class
+        ${c.children.length?` · base for ${c.children.map(x=>`<a href="#" onclick="event.preventDefault();openClassEditor(${x.id})">${esc(x.name)}</a>`).join(", ")}`:""}</div></div>
+      <div class="row"><button onclick="closeClassEditor()">Close</button><button class="danger" onclick="deleteClassNow(${c.id})">Delete class</button></div></div>
+    <div class="box">
+      <label for="clEditName">Name</label><input id="clEditName" value="${esc(c.name)}">
+      <label for="clEditParent">Parent class</label><select id="clEditParent" onchange="saveClassParent(${c.id},this.value)">
+        <option value="">No parent</option>
+        ${parentOptions.map(p=>`<option value="${p.id}"${c.parent_id===p.id?" selected":""}>${esc(p.name)}</option>`).join("")}
+      </select>
+      <div class="hint">Inherits the parent's KPIs. Define a KPI below with the same metric key to override one.</div>
+      <label for="clEditDesc">Description</label><textarea id="clEditDesc">${esc(c.description)}</textarea>
+      <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="primary" onclick="saveClassDetails(${c.id})">Save</button></div>
+    </div>
+    <div class="section-title"><h3>Effective KPIs</h3><span class="muted">Own KPIs plus everything inherited</span></div>
+    ${c.effective_kpis.length?`<div style="overflow:auto"><table class="compact"><thead><tr><th>Name</th><th>Metric key</th><th>Unit</th><th>From</th></tr></thead><tbody>
+      ${c.effective_kpis.map(k=>`<tr><td>${esc(k.name)}</td><td class="mono">${esc(k.metric_key)}</td><td>${esc(k.unit)}</td>
+        <td>${k.inherited?`<span class="muted">inherited from ${esc(k.source_class_name)}</span>`:"this class"}</td></tr>`).join("")}
+      </tbody></table></div>`:`<p class="muted">No KPIs yet, here or inherited.</p>`}
+    <div class="section-title"><h3>This class's own KPIs</h3></div>
+    ${c.kpis.length?`<div style="overflow:auto"><table><thead><tr><th>Name</th><th>Metric key</th><th>Unit</th><th></th></tr></thead><tbody>
+      ${c.kpis.map(k=>`<tr>
+        <td><input value="${esc(k.name)}" onchange="saveKpiField(${c.id},${k.id},'name',this.value)"></td>
+        <td><input class="mono" value="${esc(k.metric_key)}" onchange="saveKpiField(${c.id},${k.id},'metric_key',this.value)"></td>
+        <td><input value="${esc(k.unit)}" onchange="saveKpiField(${c.id},${k.id},'unit',this.value)"></td>
+        <td><button class="danger" onclick="deleteKpi(${c.id},${k.id})">Delete</button></td>
+      </tr>`).join("")}</tbody></table></div>`:`<p class="muted">No KPIs defined on this class itself yet.</p>`}
+    <div class="box" style="margin-top:12px"><h3>Add a KPI</h3>
+      <div class="row" style="flex-wrap:nowrap">
+        <div style="flex:2"><label for="kName">Name</label><input id="kName" placeholder="Max Stress"></div>
+        <div style="flex:2"><label for="kMetric">Metric key</label><input id="kMetric" class="mono" placeholder="Max_Mises"></div>
+        <div style="flex:1"><label for="kUnit">Unit</label><input id="kUnit" placeholder="MPa"></div>
+      </div>
+      <div class="hint">The metric key must match exactly what a job's result reports (see the study's Compare metrics table) for the value to show up.</div>
+      <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="primary" onclick="addKpi(${c.id})">Add KPI</button></div>
+    </div>`;
+}
+async function saveClassDetails(cid){
+  try{await api(`/api/study-classes/${cid}`,jsonOpts("PATCH",{name:$("clEditName").value.trim(),description:$("clEditDesc").value}));render()}
+  catch(e){alert(e.message)}
+}
+async function saveClassParent(cid,parentVal){
+  try{await api(`/api/study-classes/${cid}/parent`,jsonOpts("POST",{parent_id:parentVal?+parentVal:null}))}
+  catch(e){alert(e.message)}
+  render();
+}
+async function saveKpiField(cid,kid,field,value){
+  try{await api(`/api/study-classes/${cid}/kpis/${kid}`,jsonOpts("PATCH",{[field]:value}))}
+  catch(e){alert(e.message)}
+  render();
+}
+async function addKpi(cid){
+  const name=$("kName").value.trim(),metric_key=$("kMetric").value.trim();
+  if(!name||!metric_key)return alert("A KPI needs a name and a metric key.");
+  try{await api(`/api/study-classes/${cid}/kpis`,jsonOpts("POST",{name,metric_key,unit:$("kUnit").value.trim()}));render()}
+  catch(e){alert(e.message)}
+}
+async function deleteKpi(cid,kid){
+  if(!confirm("Delete this KPI? Any study pins for it are removed too."))return;
+  await api(`/api/study-classes/${cid}/kpis/${kid}`,{method:"DELETE"});render();
+}
+async function deleteClassNow(cid){
+  if(!confirm("Delete this study class? Studies using it keep their data but lose the KPI scorecard."))return;
+  await api(`/api/study-classes/${cid}`,{method:"DELETE"});S.classId=null;render();
+}
+
+/* ---------- Job panel: one tab per attempt ---------- */
+async function openJob(id){S.jobId=id;S.attempt=null;S.showScript=false;S.compare=false;S.showOld=false;await renderDrawer();$("drawer").classList.add("open");$("drawer").setAttribute("aria-hidden","false")}
+function closeDrawer(){S.jobId=null;$("drawer").classList.remove("open");$("drawer").setAttribute("aria-hidden","true")}
+const redraw=patch=>{Object.assign(S,patch);renderDrawer()};
+
+function paramsDiff(attempts){
+  const keys=[...new Set(attempts.flatMap(a=>Object.keys(a.params||{})))].sort();
+  return keys.filter(k=>new Set(attempts.map(a=>JSON.stringify((a.params||{})[k]))).size>1);
+}
+function compareTable(attempts){
+  const diff=paramsDiff(attempts);
+  const mkeys=[...new Set(attempts.flatMap(a=>Object.keys(a.metrics||{})))];
+  return `<div style="overflow:auto"><table class="compact"><thead><tr><th>Attempt</th><th>Result</th><th>Note</th>
+    ${diff.map(k=>`<th>${esc(k)}</th>`).join("")}<th title="Compared with the attempt before">Input files</th>${mkeys.map(k=>`<th>${esc(k)}</th>`).join("")}</tr></thead><tbody>
+    ${attempts.map((a,i)=>{const prev=attempts[i+1];
+      const inputsChanged=prev&&JSON.stringify(a.inputs.filter(x=>x.name!=="job_params.json").map(x=>[x.name,x.sha256]))!==JSON.stringify(prev.inputs.filter(x=>x.name!=="job_params.json").map(x=>[x.name,x.sha256]));
+      return `<tr class="click" onclick="redraw({attempt:${a.number},compare:false})"><td>${a.number}</td><td>${stagePill(a.stage)}</td><td class="note-cell" title="${esc(a.note)}">${esc(a.note)||"—"}</td>
+      ${diff.map(k=>`<td>${fmtNum((a.params||{})[k]??"—")}</td>`).join("")}
+      <td>${!prev?"—":inputsChanged?'<span class="changed">changed</span>':"same"}</td>
+      ${mkeys.map(k=>`<td>${k in (a.metrics||{})?fmtNum(a.metrics[k]):"—"}</td>`).join("")}</tr>`}).join("")}</tbody></table></div>
+    ${diff.length?"":`<p class="hint">All attempts used the same parameters.</p>`}`;
+}
+
+function provenanceView(a){
+  if(!a.frozen_at)return `<p class="muted">Recorded when this attempt is handed to the HPC: the parameters and run setup are frozen, and the input files and git state are saved.</p>`;
+  const g=a.git;
+  const gitLine=!g?`<span class="muted">not a git repository</span>`:
+    `<span class="mono" title="${esc(g.commit)}">${esc(g.commit.slice(0,10))}</span> on ${esc(g.branch||"?")}${g.dirty?` <span class="changed" title="${esc((g.changed_files||[]).join("\n"))}">with uncommitted changes</span>`:" (clean)"}${g.remote?`<div class="hint mono">${esc(g.remote)}${g.path?" : "+esc(g.path):""}</div>`:""}`;
+  return `<dl class="kv"><dt>Frozen</dt><dd>${fmtT(a.frozen_at)}</dd><dt>Input folder</dt><dd>${gitLine}</dd></dl>
+    ${a.inputs.length?`<table class="compact"><thead><tr><th>Input file</th><th>Size</th><th>SHA-256</th><th></th></tr></thead><tbody>
+    ${a.inputs.map(i=>`<tr><td class="mono">${esc(i.name)}</td><td>${fmtB(i.size)}</td><td class="mono" title="${i.sha256}">${i.sha256.slice(0,12)}</td>
+      <td>${i.stored?`<a href="/api/inputs/${i.sha256}?name=${encodeURIComponent(i.name)}" download="${esc(i.name)}">Download</a>`:i.remote_ref?'<span class="muted" title="Hashed on the HPC and symlinked into the job folder, never uploaded">already on the HPC</span>':i.name==="job_params.json"?'<span class="muted">the frozen parameters</span>':'<span class="muted" title="Larger than the provenance limit">not stored</span>'}</td></tr>`).join("")}</tbody></table>`:""}`;
+}
+
+function resultItem(r){
+  return `<div class="result${r.superseded_at?" old":""}">
+    <div class="row" style="justify-content:space-between"><b>${esc(r.name)}</b><span class="muted">${r.source==="manual"?"added by hand, ":r.population?`round ${r.population}, `:""}${fmtT(r.created_at)}</span></div>
+    ${r.description?`<div class="prose" style="margin:6px 0">${esc(r.description)}</div>`:""}
+    ${Object.keys(r.metrics||{}).length?`<pre>${esc(JSON.stringify(r.metrics,null,2))}</pre>`:""}
+    <div class="row" style="margin-top:8px">
+      ${r.sha256?`<a href="/api/results/${r.id}/blob" download>Download ${esc(r.filename)}</a><span class="muted">${fmtB(r.size_bytes)}</span>`
+        :r.local_path?`<span>On this PC: <span class="mono">${esc(r.local_path)}</span></span><span class="muted">${fmtB(r.size_bytes)}</span>`
+        :r.remote_path?`<span>On the HPC: <span class="mono">${esc(r.remote_path)}</span></span><span class="muted">${fmtB(r.size_bytes)}</span>`
+        :`<span class="muted">No file</span>`}
+      ${r.source==="manual"?`<button class="danger" style="margin-left:auto" onclick="deleteResult(${r.id})">Delete</button>`:""}</div></div>`;
+}
+
+async function renderDrawer(){
+  const [j,attempts,manual,notes]=await Promise.all([api(`/api/jobs/${S.jobId}`),api(`/api/jobs/${S.jobId}/attempts`),
+    api(`/api/jobs/${S.jobId}/results`),api(`/api/jobs/${S.jobId}/notebook`)]);
+  const a=attempts.find(x=>x.number===S.attempt)||attempts[0];
+  const busy=attempts.some(x=>["queued","submitting","submitted","running"].includes(x.run_status));
+  let spec=null,results=[];
+  if(a)[spec,results]=await Promise.all([api(`/api/attempts/${a.id}/script`),api(`/api/attempts/${a.id}/results?include_superseded=true`)]);
+  const current=results.filter(r=>!r.superseded_at), old=results.filter(r=>r.superseded_at);
+  const runActions=!a?"":[
+    (a.run_status==="queued"||(onHPC(a)&&!a.cancel_requested))?`<button class="danger" onclick="act(()=>cancelAttempt(${a.id}))">Cancel run</button>`:"",
+    `<button onclick="redraw({showScript:!S.showScript})">${S.showScript?"Hide":"Show"} HPC script</button>`].join("");
+  const popActions=!a||a.run_status!=="finished"?"":[
+    ["done","failed","skipped"].includes(a.populate_status)?`<button onclick="act(()=>setPop(${a.id},'pending'))" title="Adds a new round; the current results are kept as history">Populate again</button>`:"",
+    ["pending","failed"].includes(a.populate_status)?`<button onclick="act(()=>setPop(${a.id},'skipped'))">Skip population</button>`:""].join("");
+  $("drawer").innerHTML=`
+    <div class="head"><div><div class="muted">Job #${j.id} in ${esc(j.study_name)}</div><h2 style="font-size:24px">${esc(j.name)}</h2>
+      <div style="margin-top:6px">${stagePill(j.stage)}</div></div><button onclick="closeDrawer()">Close</button></div>
+    <div class="prose">${esc(j.description)||'<span class="muted">No description.</span>'}</div>
+    <div class="row" style="margin:12px 0"><button class="primary" ${busy?'disabled title="An attempt is still queued or running"':""} onclick="openAgain()">Run again…</button>
+      ${attempts.length>1?`<button onclick="redraw({compare:!S.compare})">${S.compare?"Hide comparison":"Compare attempts"}</button>`:""}</div>
+    ${S.compare?compareTable(attempts):""}
+    ${attempts.length?`<div class="tabs" role="tablist">${attempts.map(x=>`<button role="tab" aria-selected="${x.number===a.number}" class="${x.number===a.number?"on":""}" onclick="redraw({attempt:${x.number},showScript:false,showOld:false})">
+        <i style="background:var(--${x.stage})"></i>Attempt ${x.number}${x===attempts[0]?" (latest)":""}</button>`).join("")}</div>`:`<p class="muted">Not run yet.</p>`}
+    ${!a?"":`
+    <div class="attempt">
+      ${a.note||a.source==="import"?`<p class="note-line">${a.source==="import"?'<span class="badge">imported</span> ':""}${esc(a.note)}</p>`:""}
+      <label>Parameters${a.frozen_at?" (frozen)":""}</label><pre>${esc(JSON.stringify(a.params,null,2))}</pre>
+
+      <section class="step" style="--c:var(--${RUN_C[a.run_status]})">
+        <h3>1. Run on HPC ${runPill(a)}</h3>
+        ${a.source==="import"?`<p class="muted">Results imported from outside FEM Tracker; nothing ran.</p>`:`
+        <dl class="kv">
+          <dt>Host</dt><dd class="mono">${esc(a.remote_host)||"—"}</dd>
+          <dt>Remote folder</dt><dd class="mono">${esc(a.run_dir)||"—"}</dd>
+          <dt>tmux session</dt><dd class="mono">${esc(a.run_status!=="queued"?a.session_name:"")||"—"}</dd>
+          <dt>Queued</dt><dd>${fmtT(a.queued_at)}</dd>
+          <dt>Started</dt><dd>${fmtT(a.started_at)}${a.started_at?`, ran ${dur(a.started_at,a.finished_at)}`:""}</dd>
+          <dt>Exit code</dt><dd>${a.exit_code??"—"}</dd>
+        </dl>
+        ${a.run_status==="running"&&a.session_name&&a.session_name!=="nohup"?`<div class="hint">Watch it live: log in with PuTTY and run <code>tmux attach -t ${esc(a.session_name)}</code>, or <code>tail -f ${esc(a.run_dir)}/run.log</code></div>`:""}
+        ${a.run_error?`<pre style="border-color:var(--failed);max-height:240px;margin-top:8px">${esc(a.run_error)}</pre>`:""}
+        <div class="row" style="margin-top:10px">${runActions}</div>
+        ${S.showScript?`<label>Commands</label><pre>${esc(spec.commands.join("\n")||"(none)")}</pre>
+          <label>fem_run.sh${spec.frozen?", exactly as run":", as it would run now"}</label><pre style="max-height:320px">${esc(spec.script)}</pre>`:""}`}
+      </section>
+
+      <section class="step" style="--c:var(--${a.run_status==="finished"?POP_C[a.populate_status]:"cancelled"})">
+        <h3>2. Populate database ${popPill(a)}</h3>
+        ${a.run_status!=="finished"?`<p class="muted">Starts after the run finishes. Brings back: ${spec.retrieve.map(esc).join(", ")||"run.log only"}.</p>`:`
+        <dl class="kv"><dt>Brings back</dt><dd class="mono">${spec.retrieve.map(esc).join(", ")||"run.log only"}</dd>
+          <dt>Rounds</dt><dd>${a.population||0}</dd>
+          <dt>Saved on PC in</dt><dd class="mono">${esc(a.local_dir)||"—"}</dd>
+          <dt>Populated</dt><dd>${fmtT(a.populated_at)}${a.populated_by?` by ${esc(a.populated_by)}`:""}</dd>
+          <dt>Remote folder</dt><dd>${a.remote_cleaned_at?`deleted ${fmtT(a.remote_cleaned_at)}`:spec.cleanup?"deleted after population":"kept"}</dd></dl>
+        ${a.populate_error?`<pre style="border-color:var(--failed);max-height:240px">${esc(a.populate_error)}</pre>`:""}
+        <div class="row" style="margin-top:8px">${popActions}</div>`}
+      </section>
+
+      <section class="step" style="--c:var(--queued)"><h3>Provenance</h3>${provenanceView(a)}</section>
+
+      <div class="section-title"><h3>Results of attempt ${a.number} (${current.length})</h3></div>
+      ${current.map(resultItem).join("")||`<p class="muted">No results yet.</p>`}
+      ${old.length?`<button class="linkish" onclick="redraw({showOld:!S.showOld})">${S.showOld?"Hide":"Show"} ${old.length} results from earlier population rounds</button>
+        ${S.showOld?old.map(resultItem).join(""):""}`:""}
+    </div>`}
+
+    <div class="section-title"><h3>Added by hand (${manual.length})</h3></div>
+    ${manual.map(resultItem).join("")||""}
+    <div class="box" style="margin-top:10px"><h3>Add a result by hand</h3>
+      <p class="muted" style="margin:0">Belongs to the job, not to an attempt; always shown in the comparison.</p>
+      <label for="rName">Name</label><input id="rName" placeholder="Hand calc check, load case A">
+      <label for="rDesc">Results description</label><textarea id="rDesc" placeholder="What the run showed, hotspots, convergence notes"></textarea>
+      <label for="rMetrics">Metrics (JSON)</label><textarea id="rMetrics" class="mono" style="min-height:60px">{}</textarea>
+      <label for="rFile">File (optional)</label><input id="rFile" type="file">
+      <div class="row" style="justify-content:flex-end;margin-top:12px"><span id="rMsg" class="muted"></span><button class="primary" onclick="saveResult()">Save result</button></div>
+    </div>
+    ${notes.length?`<div class="section-title"><h3>Notebook entries about this job (${notes.length})</h3></div>
+      ${notes.map(n=>`<div class="result"><a href="#" onclick="event.preventDefault();openNotebookFromJob(${n.id})">${esc(n.title)}</a>
+        <span class="muted"> — ${n.kind}, updated ${fmtT(n.updated_at)}</span></div>`).join("")}`:""}
+    <div class="row" style="margin-top:18px"><button class="danger" onclick="deleteJob(${j.id})">Delete job</button></div>`;
+}
+async function openNotebookFromJob(eid){closeDrawer();S.view="study";S.studyTab="notebook";await render();await openNotebookEntry(eid)}
+async function deleteJob(id){if(!confirm("Delete this job, all its attempts and their database results? Files on the HPC and this PC are not touched."))return;await api(`/api/jobs/${id}`,{method:"DELETE"});closeDrawer();render()}
+async function deleteResult(id){if(!confirm("Delete this result?"))return;act(()=>api(`/api/results/${id}`,{method:"DELETE"}))}
+async function saveResult(){
+  const name=$("rName").value.trim();if(!name)return $("rMsg").textContent="Add a name first.";
+  try{JSON.parse($("rMetrics").value||"{}")}catch{return $("rMsg").textContent="Metrics must be valid JSON."}
+  const fd=new FormData();fd.append("name",name);fd.append("description",$("rDesc").value);fd.append("metrics",$("rMetrics").value||"{}");
+  if($("rFile").files[0])fd.append("file",$("rFile").files[0]);
+  $("rMsg").textContent="Uploading…";
+  try{await api(`/api/jobs/${S.jobId}/results`,{method:"POST",body:fd});await renderDrawer();render()}
+  catch(e){$("rMsg").textContent=e.message}
+}
+
+/* ---------- Run again ---------- */
+async function openAgain(){
+  const j=await api(`/api/jobs/${S.jobId}`);
+  $("aNote").value="";$("aParams").value=JSON.stringify(j.params||{},null,2);$("aMsg").textContent="";
+  againDlg.showModal();$("aNote").focus();
+}
+async function saveAgain(){
+  let params;try{params=JSON.parse($("aParams").value||"{}")}catch{return $("aMsg").textContent="Parameters must be valid JSON."}
+  const note=$("aNote").value.trim();
+  if(!note)return $("aMsg").textContent="Say why you're running it again; it's how you'll tell attempts apart later.";
+  try{const a=await api(`/api/jobs/${S.jobId}/attempts`,jsonOpts("POST",{note,params}));againDlg.close();S.attempt=a.number;S.compare=false;await renderDrawer();render()}
+  catch(e){$("aMsg").textContent=e.message}
+}
+
+/* ---------- Study history ---------- */
+const FIELD_LABEL={results_summary:"Study results",description:"Description",run_config:"Run setup",name:"Name"};
+async function openHistory(field="results_summary"){
+  const h=await api(`/api/studies/${S.studyId}/history?field=${field}`);
+  $("hTabs").innerHTML=Object.entries(FIELD_LABEL).map(([k,v])=>`<button class="${k===field?"on":""}" onclick="openHistory('${k}')">${v}</button>`).join("");
+  const show=v=>{if(field!=="run_config")return `<div class="prose">${esc(v)||'<span class="muted">(empty)</span>'}</div>`;
+    try{return setupView({...BLANK_SETUP,...JSON.parse(v)})}catch{return `<pre>${esc(v)}</pre>`}};
+  $("hList").innerHTML=h.length?h.map((r,i)=>`<div class="rev"><div class="muted">${fmtT(r.created_at)}${i===0?" (current)":""}</div>${show(r.value)}</div>`).join("")
+    :`<p class="muted">No saved versions yet.</p>`;
+  if(!historyDlg.open)historyDlg.showModal();
+}
+
+/* ---------- Notebook ---------- */
+const NB_KIND_LABEL={note:"Note",finding:"Finding",decision:"Decision"};
+function confirmDiscardNotebookEdits(){return confirm("Discard unsaved changes to this notebook entry?")}
+function markNotebookDirty(){S.nbDirty=true}
+
+async function renderNotebook(){
+  const body=$("studyBody");
+  if(S.nbEntry)return renderNotebookEditor(body);
+  const q=new URLSearchParams();
+  if(S.nbKind)q.set("kind",S.nbKind);
+  if(S.nbQ)q.set("q",S.nbQ);
+  if(S.nbIncludeArchived)q.set("include_archived","true");
+  const entries=await api(`/api/studies/${S.studyId}/notebook?${q}`);
+  body.innerHTML=`
+    <div class="nb-row" style="margin-top:4px">
+      <div><label for="nbKindFilter">Kind</label><select id="nbKindFilter" onchange="S.nbKind=this.value;renderNotebook()">
+        <option value=""${S.nbKind===""?" selected":""}>All kinds</option>
+        ${Object.entries(NB_KIND_LABEL).map(([k,v])=>`<option value="${k}"${S.nbKind===k?" selected":""}>${v}</option>`).join("")}
+      </select></div>
+      <div><label for="nbSearch">Search</label><input id="nbSearch" value="${esc(S.nbQ)}" placeholder="Title or text"
+        oninput="clearTimeout(S.nbSearchTimer);S.nbSearchTimer=setTimeout(()=>{S.nbQ=this.value;renderNotebook()},300)"></div>
+      <label class="check" style="margin-top:22px"><input type="checkbox" id="nbArchivedToggle" ${S.nbIncludeArchived?"checked":""}
+        onchange="S.nbIncludeArchived=this.checked;renderNotebook()"> Show archived</label>
+      <button class="primary" style="margin-top:4px" onclick="newNotebookEntry()">New entry</button>
+    </div>
+    ${entries.length?entries.map(e=>`
+      <div class="nb-card" tabindex="0" onclick="openNotebookEntry(${e.id})" onkeydown="if(event.key==='Enter')openNotebookEntry(${e.id})">
+        <div class="row" style="justify-content:space-between">
+          <h4>${esc(e.title)}${e.archived_at?' <span class="muted">(archived)</span>':""}</h4>
+          <span class="muted">${fmtT(e.updated_at)}</span>
+        </div>
+        <div class="row">${pill(NB_KIND_LABEL[e.kind]||e.kind,e.kind==="finding"?"populated":e.kind==="decision"?"on_cluster":"queued")}
+          ${(e.tags||[]).map(t=>`<span class="nb-tag">${esc(t)}</span>`).join("")}</div>
+      </div>`).join(""):`<div class="empty">No notebook entries yet. Write down findings and decisions next to the runs they're about.</div>`}`;
+}
+
+function blankNotebookEntry(){return{id:null,title:"",kind:"note",tags:[],format:"markdown",body:"",rendered_html:"",linked_jobs:[]}}
+function newNotebookEntry(){S.nbEntry=blankNotebookEntry();S.nbDirty=false;renderNotebook()}
+async function openNotebookEntry(id){
+  if(S.studyTab!=="notebook"){S.studyTab="notebook";await render();}
+  S.nbEntry=await api(`/api/notebook/${id}`);S.nbDirty=false;await renderNotebook();
+}
+function closeNotebookEntry(){if(S.nbDirty&&!confirmDiscardNotebookEdits())return;S.nbEntry=null;S.nbDirty=false;renderNotebook()}
+
+function renderNotebookEditor(body){
+  const e=S.nbEntry;
+  body.innerHTML=`
+    <div class="row" style="justify-content:space-between;align-items:flex-start">
+      <h3 style="font-size:19px">${e.id?"Edit entry":"New entry"}</h3>
+      <div class="row">${e.id?`<button onclick="openNotebookHistory()">History</button>
+        <button class="danger" onclick="archiveNotebookEntry()">${e.archived_at?"Restore":"Archive"}</button>`:""}
+        <button onclick="closeNotebookEntry()">Close</button><button class="primary" onclick="saveNotebookEntry()">Save</button></div>
+    </div>
+    <div class="nb-row">
+      <div style="flex:2"><label for="nbTitle">Title</label><input id="nbTitle" value="${esc(e.title)}" oninput="markNotebookDirty()"></div>
+      <div><label for="nbKind">Kind</label><select id="nbKind" onchange="markNotebookDirty()">
+        ${Object.entries(NB_KIND_LABEL).map(([k,v])=>`<option value="${k}"${e.kind===k?" selected":""}>${v}</option>`).join("")}
+      </select></div>
+      <div><label for="nbFormat">Format</label><select id="nbFormat" onchange="markNotebookDirty();schedulePreview()">
+        <option value="markdown"${e.format==="markdown"?" selected":""}>Markdown</option>
+        <option value="html"${e.format==="html"?" selected":""}>HTML</option>
+      </select></div>
+    </div>
+    <label for="nbTags">Tags, comma-separated</label>
+    <input id="nbTags" value="${esc((e.tags||[]).join(", "))}" oninput="markNotebookDirty()">
+    ${e.linked_jobs&&e.linked_jobs.length?`<p class="hint">Linked jobs: ${e.linked_jobs.map(j=>`<a href="#" onclick="event.preventDefault();openJob(${j.id})">#${j.id} ${esc(j.name)}</a>`).join(", ")}</p>`:""}
+    ${e.attachments&&e.attachments.length?`<p class="hint">Attachments: ${e.attachments.map(a=>`<a href="/api/notebook/attachments/${a.sha256}" download="${esc(a.filename)}">${esc(a.filename)}</a> (${fmtB(a.size)})`).join(", ")}</p>`:""}
+    <div class="nb-toolbar" style="margin-top:10px">
+      <button type="button" onclick="wrapSelection('**','**')" title="Bold"><b>B</b></button>
+      <button type="button" onclick="wrapSelection('*','*')" title="Italic"><i>I</i></button>
+      <button type="button" onclick="insertAtCursor('\\n## ')" title="Heading">H</button>
+      <button type="button" onclick="insertAtCursor('\\n- ')" title="Bulleted list">List</button>
+      <button type="button" onclick="wrapSelection('[',']( )')" title="Link">Link</button>
+      <button type="button" onclick="nbFilePick.click()" title="Upload an image">Image…</button>
+      <button type="button" onclick="openImagePicker()" title="Insert an existing result image">Existing image…</button>
+      <button type="button" id="nbFolderBtn" onclick="nbFolderPick.click()" title="Zip a folder of input files and attach it">Attach folder…</button>
+      <button type="button" onclick="openRefDialog()" title="Insert a [[ ]] link to a job, attempt, result, metrics or git commit">[[ ]] Link…</button>
+      <span id="nbAttachMsg" class="muted"></span>
+    </div>
+    <div class="nb-grid">
+      <textarea id="nbBody" spellcheck="false" oninput="markNotebookDirty();schedulePreview()"
+        onpaste="nbPaste(event)" ondragover="event.preventDefault();this.classList.add('nb-drop')"
+        ondragleave="this.classList.remove('nb-drop')" ondrop="nbDrop(event)">${esc(e.body)}</textarea>
+      <div class="nb-preview" id="nbPreview" onclick="nbPreviewClick(event)">${e.rendered_html||""}</div>
+    </div>`;
+  document.addEventListener("keydown",nbSaveShortcut);
+}
+function nbSaveShortcut(ev){if((ev.ctrlKey||ev.metaKey)&&ev.key==="s"&&S.nbEntry){ev.preventDefault();saveNotebookEntry()}}
+
+function nbField(id){return $(id)}
+function insertAtCursor(text){
+  const t=$("nbBody"),s=t.selectionStart,en=t.selectionEnd;
+  t.value=t.value.slice(0,s)+text+t.value.slice(en);
+  t.selectionStart=t.selectionEnd=s+text.length;t.focus();markNotebookDirty();schedulePreview();
+}
+function wrapSelection(before,after){
+  const t=$("nbBody"),s=t.selectionStart,en=t.selectionEnd,sel=t.value.slice(s,en);
+  t.value=t.value.slice(0,s)+before+sel+after+t.value.slice(en);
+  t.selectionStart=s+before.length;t.selectionEnd=s+before.length+sel.length;t.focus();markNotebookDirty();schedulePreview();
+}
+
+function schedulePreview(){clearTimeout(S.nbPreviewTimer);S.nbPreviewTimer=setTimeout(renderPreviewNow,300)}
+async function renderPreviewNow(){
+  const body=$("nbBody");if(!body)return;
+  const format=$("nbFormat").value;
+  try{const r=await api("/api/notebook/render",jsonOpts("POST",{format,body:body.value}));
+    const p=$("nbPreview");if(p)p.innerHTML=r.html;
+  }catch{}
+}
+function nbPreviewClick(ev){
+  const img=ev.target.closest("img");
+  if(img&&img.parentElement.tagName!=="A"){window.open(img.src,"_blank");return}
+  const a=ev.target.closest("a.nbref");
+  if(!a)return;
+  ev.preventDefault();
+  const kind=a.dataset.kind;
+  if(kind==="job"||kind==="result")openJob(+( a.dataset.job||a.dataset.id));
+  else if(kind==="attempt"||kind==="git")openJob(+a.dataset.job);
+}
+
+async function uploadNotebookImage(file){
+  if(!/^image\/(png|jpeg|gif|webp)$/.test(file.type)&&!/\.(png|jpe?g|gif|webp)$/i.test(file.name)){
+    alert("Only PNG, JPEG, GIF and WebP images can be pasted or attached.");return;
+  }
+  const fd=new FormData();fd.append("file",file);
+  let asset;try{asset=await api("/api/notebook/assets",{method:"POST",body:fd})}
+  catch(e){alert(e.message);return}
+  // the caption is inserted as plain editable text right where the cursor was, so there is no
+  // blocking prompt to type into: edit it in place like any other text, same as typing it by hand
+  insertImageWithEditableCaption(file.name.replace(/\.[^.]+$/,"")||"screenshot",asset.sha256);
+}
+function insertImageWithEditableCaption(caption,sha){
+  const t=$("nbBody"),s=t.selectionStart;
+  const text=`![${caption}](asset:${sha})`;
+  insertAtCursor(text);
+  t.selectionStart=s+2;t.selectionEnd=s+2+caption.length;t.focus();
+}
+function nbFilePicked(){const f=nbFilePick.files[0];if(f)uploadNotebookImage(f);nbFilePick.value=""}
+function nbPaste(ev){
+  const items=[...(ev.clipboardData?.items||[])];
+  const img=items.find(i=>i.type.startsWith("image/"));
+  if(!img)return;
+  ev.preventDefault();uploadNotebookImage(img.getAsFile());
+}
+function nbDrop(ev){
+  ev.preventDefault();ev.currentTarget.classList.remove("nb-drop");
+  const f=[...(ev.dataTransfer?.files||[])].find(x=>x.type.startsWith("image/"));
+  if(f)uploadNotebookImage(f);
+}
+
+async function nbFolderPicked(){
+  const files=[...nbFolderPick.files];nbFolderPick.value="";
+  if(!files.length)return;
+  const msg=$("nbAttachMsg"),btn=$("nbFolderBtn");
+  btn.disabled=true;msg.textContent=`Zipping ${files.length} file${files.length===1?"":"s"}…`;
+  const fd=new FormData();
+  for(const f of files)fd.append("files",f,f.webkitRelativePath||f.name);
+  try{
+    const att=await api("/api/notebook/attachments",{method:"POST",body:fd});
+    insertAtCursor(`[[attachment:${att.sha256}]]`);
+  }catch(e){alert(e.message)}
+  finally{msg.textContent="";btn.disabled=false}
+}
+
+async function openImagePicker(){
+  const [assets,images]=await Promise.all([api(`/api/studies/${S.studyId}/notebook/assets`),api(`/api/studies/${S.studyId}/notebook/images`)]);
+  const assetRows=assets.map(a=>`
+    <div class="nb-image-pick" onclick="pickExistingAsset('${a.sha256}')">
+      <img class="nb-thumb" src="/api/notebook/assets/${a.sha256}" alt="">
+      <span>${a.width}×${a.height} ${esc(a.mime)}</span><span class="muted">${fmtB(a.size)}, ${fmtT(a.created_at)}</span>
+    </div>`).join("");
+  const resultRows=images.map(im=>`
+    <div class="nb-image-pick" onclick="pickExistingResult(${im.id},'${esc(im.name).replace(/'/g,"\\'")}')">
+      <img class="nb-thumb" src="/api/notebook/results/${im.id}/image" alt="">
+      <span>#${im.id} ${esc(im.name)} <span class="muted">(job #${im.job_id} ${esc(im.job_name)})</span></span>
+      <span class="muted">${fmtB(im.size_bytes)}</span>
+    </div>`).join("");
+  $("nbImageList").innerHTML=
+    `<h4 style="font-size:14px;color:var(--ink2);margin:10px 0 4px">Pasted into this study's notebook</h4>`+
+    (assetRows||`<p class="muted">Nothing pasted yet.</p>`)+
+    `<h4 style="font-size:14px;color:var(--ink2);margin:16px 0 4px">Job results</h4>`+
+    (resultRows||`<p class="muted">No image results in this study yet.</p>`);
+  nbImageDlg.showModal();
+}
+function pickExistingAsset(sha){nbImageDlg.close();insertImageWithEditableCaption("screenshot",sha)}
+function pickExistingResult(id,name){nbImageDlg.close();insertAtCursor(`![${name}](result:${id})`)}
+
+function renderRefFields(){
+  const kind=$("nbRefKind").value;
+  $("nbRefFields").innerHTML=kind==="job"?`<label for="nbRefA">Job #</label><input id="nbRefA" type="number" min="1">`:
+    kind==="attempt"?`<label for="nbRefA">Job #</label><input id="nbRefA" type="number" min="1">
+      <label for="nbRefB">Attempt #</label><input id="nbRefB" type="number" min="1">`:
+    kind==="result"?`<label for="nbRefA">Result #</label><input id="nbRefA" type="number" min="1">`:
+    kind==="git"?`<label for="nbRefA">Commit (full or a short prefix, like git log --oneline)</label><input id="nbRefA" class="mono" placeholder="a1b2c3d">`:
+    `<label for="nbRefA">Job #</label><input id="nbRefA" type="number" min="1">`;
+}
+function openRefDialog(){$("nbRefKind").value="job";renderRefFields();nbRefDlg.showModal()}
+function insertRef(){
+  const kind=$("nbRefKind").value,a=$("nbRefA").value.trim();
+  if(!a)return;
+  const token=kind==="attempt"?`[[attempt:${a}/${($("nbRefB").value||"").trim()}]]`:kind==="metrics"?`[[metrics:job:${a}]]`:`[[${kind}:${a}]]`;
+  nbRefDlg.close();insertAtCursor(token);
+}
+
+async function saveNotebookEntry(){
+  const e=S.nbEntry;
+  const title=$("nbTitle").value.trim();
+  if(!title)return $("nbTitle").focus();
+  const body={title,kind:$("nbKind").value,format:$("nbFormat").value,
+    tags:$("nbTags").value.split(",").map(x=>x.trim()).filter(Boolean),body:$("nbBody").value};
+  try{
+    const saved=e.id?await api(`/api/notebook/${e.id}`,jsonOpts("PATCH",body)):await api(`/api/studies/${S.studyId}/notebook`,jsonOpts("POST",body));
+    S.nbEntry=saved;S.nbDirty=false;await renderNotebook();render();
+  }catch(err){alert(err.message)}
+}
+async function archiveNotebookEntry(){
+  const e=S.nbEntry;
+  const action=e.archived_at?"restore":"archive";
+  S.nbEntry=await api(`/api/notebook/${e.id}/${action}`,{method:"POST"});S.nbDirty=false;await renderNotebook();render();
+}
+
+async function openNotebookHistory(){
+  const h=await api(`/api/notebook/${S.nbEntry.id}/history`);
+  S.nbHistorySel=[];
+  $("nbHistoryList").innerHTML=h.map((r,i)=>`
+    <label class="check"><input type="checkbox" value="${r.id}" onchange="toggleHistorySel(${r.id})">
+      ${fmtT(r.created_at)}${i===0?" (current)":""} — ${esc(r.title)}</label>`).join("")||`<p class="muted">No saved versions yet.</p>`;
+  $("nbHistoryCompare").innerHTML="";
+  nbHistoryDlg.showModal();
+  nbHistoryDlg._revisions=h;
+}
+function toggleHistorySel(id){
+  const i=S.nbHistorySel.indexOf(id);
+  if(i>=0)S.nbHistorySel.splice(i,1);else S.nbHistorySel.push(id);
+  if(S.nbHistorySel.length>2)S.nbHistorySel.shift();
+  if(S.nbHistorySel.length===2)compareHistory();else $("nbHistoryCompare").innerHTML="";
+}
+async function compareHistory(){
+  const revs=nbHistoryDlg._revisions;
+  const [ra,rb]=S.nbHistorySel.map(id=>revs.find(r=>r.id===id));
+  const [ha,hb]=await Promise.all([ra,rb].map(r=>api("/api/notebook/render",jsonOpts("POST",{format:r.format,body:r.body}))));
+  $("nbHistoryCompare").innerHTML=[[ra,ha],[rb,hb]].map(([r,h])=>`
+    <div><div class="muted">${fmtT(r.created_at)}</div><h4>${esc(r.title)}</h4><div class="nb-preview">${h.html}</div></div>`).join("");
+}
+
+/* ---------- Dialogs ---------- */
+async function openStudyDialog(edit=false){
+  const s=edit?S.studies.find(x=>x.id===S.studyId):null;S.editingStudy=s?s.id:null;
+  $("studyDlgTitle").textContent=s?"Edit study":"New study";
+  $("sName").value=s?.name||"";$("sDesc").value=s?.description||"";$("sSum").value=s?.results_summary||"";
+  const classes=await api("/api/study-classes");
+  $("sClass").innerHTML=`<option value="">No class</option>`+classes.map(c=>
+    `<option value="${c.id}"${s?.class_id===c.id?" selected":""}>${esc(c.name)}</option>`).join("");
+  $("sSetup").innerHTML=setupForm("s_",s?{...BLANK_SETUP,...s.run_config}:EXAMPLE_SETUP,false);
+  studyDlg.showModal();
+}
+async function saveStudy(){
+  const body={name:$("sName").value.trim(),description:$("sDesc").value,results_summary:$("sSum").value,run_config:readSetup("s_",false)};
+  if(!body.name)return $("sName").focus();
+  const classId=$("sClass").value?+$("sClass").value:null;
+  try{
+    const s=S.editingStudy?await api(`/api/studies/${S.editingStudy}`,jsonOpts("PATCH",body)):await api("/api/studies",jsonOpts("POST",body));
+    await api(`/api/studies/${s.id}/class`,jsonOpts("POST",{class_id:classId}));
+    studyDlg.close();pickStudy(s.id);
+  }catch(e){alert(e.message)}
+}
+async function deleteStudy(){if(!confirm("Delete this study, its jobs and their database results? Files on the HPC and this PC are not touched."))return;
+  await api(`/api/studies/${S.studyId}`,{method:"DELETE"});S.studyId=null;render()}
+function openJobDialog(){
+  const s=S.studies.find(x=>x.id===S.studyId);
+  $("jName").value="";$("jDesc").value="";
+  $("jSetup").innerHTML=setupForm("j_",{...BLANK_SETUP,...(s?.run_config||{})},true);
+  jobDlg.querySelector("details").open=false;jobDlg.showModal();
+}
+async function saveJob(){
+  let params;try{params=JSON.parse($("jParams").value||"{}")}catch{alert("Parameters must be valid JSON.");return}
+  const name=$("jName").value.trim();if(!name)return $("jName").focus();
+  try{
+    await api("/api/jobs",jsonOpts("POST",{study_id:S.studyId,name,description:$("jDesc").value,priority:+$("jPrio").value||0,params,run_config:readSetup("j_",true)}));
+    jobDlg.close();render();
+  }catch(e){alert(e.message)}
+}
+document.addEventListener("keydown",e=>{if(e.key==="Escape"&&S.jobId&&!document.querySelector("dialog[open]"))closeDrawer()});
+setInterval(()=>{const a=document.activeElement;if(S.nbDirty||a&&/INPUT|TEXTAREA|SELECT/.test(a.tagName)||document.querySelector("dialog[open]"))return;render()},5000);
+render();
+</script>
+</body>
+</html>

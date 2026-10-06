@@ -1,0 +1,45 @@
+# Runs the end-to-end tests (real server, fake HPC) on every push and pull request,
+# on Linux and on macOS (Apple's bash 3.2 and BSD tools), then builds the Mac program.
+name: Tests
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python-version: ["3.10", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install
+        run: pip install -e .[test]
+      - name: Configure git for the tests' throwaway repositories
+        run: |
+          git config --global user.email "tests@example.org"
+          git config --global user.name "FEM Tracker tests"
+          git config --global init.defaultBranch main
+      - name: Run tests
+        run: pytest tests -q
+
+  mac-build:
+    needs: test
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build and smoke-test the Mac program
+        run: PYTHON=python packaging/build.sh --no-tests
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FEMTracker-macos
+          path: dist/*
