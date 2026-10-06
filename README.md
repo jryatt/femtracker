@@ -65,6 +65,15 @@ full revision; **Archive** hides an entry without deleting it. Markdown and HTML
 sanitized on the server — the same code path for the preview, the saved view and the export — so a
 shared FEM Tracker page can't be used to run a script in someone's browser.
 
+## Run types
+A **run type** (sidebar: **Run types**) is a reusable run setup for one kind of job — Abaqus, LS-DYNA,
+a shell pipeline, whatever you run. It holds the same fields as a study's run setup (commands, files to
+upload or retrieve, cleanup, ...). Assign one to a study and any field the study leaves blank falls back
+to the run type's, the same way a job's setup already falls back to its study's — so a study of a given
+run type usually only needs to say where its own inputs are. Editing a run type's commands updates every
+study using it that hasn't overridden that field; an attempt still freezes its own resolved copy when
+it's handed to the HPC, so past results never change.
+
 ## Study classes and KPIs
 A **study class** (sidebar: **Study classes**) is a reusable template: a named kind of study with a
 standard list of KPIs it should report (a name, the exact metrics field it expects, e.g. `Max_Mises`,
@@ -91,6 +100,8 @@ running the newer installer over the old one.
 ## Using it
 - **Study**: description, study results, and the run setup shared by its jobs. The run setup has the
   same sections as the HPC Batch Script Builder: files to upload, commands, and files to bring back.
+  It can also list **files already on the HPC** (absolute paths, e.g. a large shared mesh on scratch):
+  these are symlinked into the job's folder and hashed for provenance instead of being uploaded.
 - **Job**: JSON parameters. They are uploaded as `job_params.json` and can be used in commands as
   `{cpus}`, `{mesh_size_mm}` and so on. `{job_name}` and `{job_id}` are always available.
 - **Step 1, run**: the job is uploaded to `<remote_workdir>/study_<id>/job_<id>` and started in tmux.

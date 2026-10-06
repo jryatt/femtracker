@@ -146,6 +146,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
       <button id="navStudies" class="on" onclick="showView('study')">Studies</button>
       <button id="navQueue" onclick="showView('queue')">Queues</button>
       <button id="navClasses" onclick="showView('classes')">Study classes</button>
+      <button id="navRunTypes" onclick="showView('runtypes')">Run types</button>
     </div>
     <button class="primary" style="background:#fff;color:var(--ink)" onclick="openStudyDialog()">New study</button>
     <div class="studies" id="studyList"></div>
@@ -179,6 +180,16 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <label for="clDesc">Description</label><textarea id="clDesc" placeholder="What kind of study this is for"></textarea>
   <div class="row" style="justify-content:flex-end;margin-top:14px">
     <button onclick="classDlg.close()">Cancel</button><button class="primary" onclick="saveNewClass()">Create</button>
+  </div>
+</dialog>
+
+<dialog id="runTypeDlg">
+  <h3>New run type</h3>
+  <label for="rtName">Name</label><input id="rtName" placeholder="Abaqus, LS-DYNA, Shell script...">
+  <label for="rtDesc">Description</label><textarea id="rtDesc" placeholder="What kind of job this runs"></textarea>
+  <fieldset><legend>Run setup</legend><div id="rtSetup"></div></fieldset>
+  <div class="row" style="justify-content:flex-end;margin-top:14px">
+    <button onclick="runTypeDlg.close()">Cancel</button><button class="primary" onclick="saveNewRunType()">Create</button>
   </div>
 </dialog>
 
@@ -255,7 +266,8 @@ const EXAMPLE_SETUP={local_dir:"",inputs:["*.py","*.inp"],remote_inputs:[],
   retrieve:["Post_Results.txt"],cleanup:true,cancel_commands:[]};
 const BLANK_SETUP={local_dir:"",inputs:[],remote_inputs:[],commands:[],retrieve:[],cleanup:false,cancel_commands:[]};
 const S={studies:[],studyId:null,view:"study",jobId:null,editingStudy:null,showScript:false,attempt:null,compare:false,showOld:false,
-  studyTab:"jobs",nbKind:"",nbQ:"",nbIncludeArchived:false,nbEntry:null,nbDirty:false,nbHistorySel:[],classId:null};
+  studyTab:"jobs",nbKind:"",nbQ:"",nbIncludeArchived:false,nbEntry:null,nbDirty:false,nbHistorySel:[],classId:null,
+  runTypeId:null,studyRunTypes:[],studyOwnCfg:null};
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmtT=t=>t?new Date(t).toLocaleString([], {dateStyle:"short",timeStyle:"short"}):"—";
@@ -278,10 +290,11 @@ async function api(path,opts={}){
 const jsonOpts=(method,body)=>({method,headers:{"Content-Type":"application/json"},body:JSON.stringify(body)});
 async function act(fn){try{await fn()}catch(e){alert(e.message)}if(S.jobId)await renderDrawer();render()}
 
-/* ---------- Run setup form (study + job override) ---------- */
-function setupForm(p,cfg,override){
-  const v=k=>override?"":(Array.isArray(cfg[k])?cfg[k].join("\n"):cfg[k]??"");
-  const ph=k=>override?(Array.isArray(cfg[k])?cfg[k].join("\n"):cfg[k])||"":"";
+/* ---------- Run setup form (run type / study / job override) ---------- */
+function setupForm(p,own,parentCfg,parentLabel){
+  const override=!!parentCfg;
+  const v=k=>Array.isArray(own[k])?own[k].join("\n"):(own[k]??"");
+  const ph=k=>override?(Array.isArray(parentCfg[k])?parentCfg[k].join("\n"):parentCfg[k])||"":"";
   return `
     <label for="${p}local">Local input folder (on this PC)</label><input id="${p}local" class="mono" value="${esc(v("local_dir"))}" placeholder="${esc(ph("local_dir")||"C:\\FEM\\Bracket")}">
     <label for="${p}inputs">Files to upload, one per line</label><textarea id="${p}inputs" class="mono" style="min-height:56px" placeholder="${esc(ph("inputs")||"*.inp")}">${esc(v("inputs"))}</textarea>
@@ -293,8 +306,8 @@ function setupForm(p,cfg,override){
     <label for="${p}retr">Files to bring back when populating, one per line</label><textarea id="${p}retr" class="mono" style="min-height:56px" placeholder="${esc(ph("retrieve")||"Post_Results.txt")}">${esc(v("retrieve"))}</textarea>
     <label for="${p}cancel">Extra commands when cancelling (optional)</label><textarea id="${p}cancel" class="mono" style="min-height:44px" placeholder="${esc(ph("cancel_commands")||"abaqus terminate job={job_name}")}">${esc(v("cancel_commands"))}</textarea>
     ${override?`<label for="${p}clean">Delete remote folder after population</label>
-      <select id="${p}clean"><option value="">Use study setting (${cfg.cleanup?"yes":"no"})</option><option value="1">Yes</option><option value="0">No</option></select>`
-    :`<label class="check"><input type="checkbox" id="${p}clean" ${cfg.cleanup?"checked":""}> Delete the remote run folder once its results are populated</label>`}`;
+      <select id="${p}clean"><option value="">Use ${esc(parentLabel||"study")} setting (${parentCfg.cleanup?"yes":"no"})</option><option value="1">Yes</option><option value="0">No</option></select>`
+    :`<label class="check"><input type="checkbox" id="${p}clean" ${own.cleanup?"checked":""}> Delete the remote run folder once its results are populated</label>`}`;
 }
 function readSetup(p,override){
   const out={local_dir:$(p+"local").value.trim(),inputs:lines($(p+"inputs").value),remote_inputs:lines($(p+"rinputs").value),
@@ -353,7 +366,7 @@ function showView(v){
   if(S.nbDirty&&!confirmDiscardNotebookEdits())return;
   S.nbDirty=false;S.nbEntry=null;
   S.view=v;$("navStudies").classList.toggle("on",v==="study");$("navQueue").classList.toggle("on",v==="queue");
-  $("navClasses").classList.toggle("on",v==="classes");render();
+  $("navClasses").classList.toggle("on",v==="classes");$("navRunTypes").classList.toggle("on",v==="runtypes");render();
 }
 function pickStudy(id){if(S.nbDirty&&!confirmDiscardNotebookEdits())return;S.nbDirty=false;S.nbEntry=null;S.studyId=id;showView("study")}
 window.addEventListener("beforeunload",e=>{if(S.nbDirty){e.preventDefault();e.returnValue=""}});
@@ -362,11 +375,12 @@ async function render(){
   await loadStudies();
   if(S.view==="queue")return renderQueue();
   if(S.view==="classes")return renderClasses();
+  if(S.view==="runtypes")return renderRunTypes();
   const m=$("main");
   if(!S.studyId){m.innerHTML=`<div class="empty"><h3>Start with a study</h3><p>A study groups related runs, like a mesh convergence check or a design sweep, and holds the commands they run on the HPC.</p><button class="primary" onclick="openStudyDialog()">New study</button></div>`;return}
   const [s,jobs,findings,kpis]=await Promise.all([api(`/api/studies/${S.studyId}`),api(`/api/jobs?study_id=${S.studyId}`),
     api(`/api/studies/${S.studyId}/notebook?kind=finding`),api(`/api/studies/${S.studyId}/kpis`)]);
-  const cfg={...BLANK_SETUP,...s.run_config};
+  const cfg={...BLANK_SETUP,...s.effective_run_config};
   m.innerHTML=`
     <div class="head">
       <div><h2>${esc(s.name)}</h2><div class="muted">Created ${fmtT(s.created_at)}, updated ${fmtT(s.updated_at)}</div></div>
@@ -381,7 +395,7 @@ async function render(){
           ${findings.map(f=>`<div class="nb-finding"><a href="#" onclick="event.preventDefault();openNotebookEntry(${f.id})">${esc(f.title)}</a>
             <span class="muted"> — ${fmtT(f.updated_at)}</span></div>`).join("")}</div>`:""}</div>
     </div>
-    <div class="box"><h3>Run setup</h3>${cfg.commands.length?setupView(cfg):`<p class="muted">No commands yet. Edit the study to say what runs on the HPC.</p>`}
+    <div class="box"><h3>Run setup${s.run_type_name?` <span class="muted" style="font-weight:400">(${esc(s.run_type_name)})</span>`:""}</h3>${cfg.commands.length?setupView(cfg):`<p class="muted">No commands yet. Edit the study to say what runs on the HPC.</p>`}
       <p class="hint" style="margin:8px 0 0">Each attempt keeps a frozen copy of the setup it ran with, so editing this doesn't change past results.</p></div>
     ${s.class_id?kpiBox(s,jobs,kpis):""}
     <div class="tabs" role="tablist" style="margin-top:22px">
@@ -578,6 +592,57 @@ async function deleteKpi(cid,kid){
 async function deleteClassNow(cid){
   if(!confirm("Delete this study class? Studies using it keep their data but lose the KPI scorecard."))return;
   await api(`/api/study-classes/${cid}`,{method:"DELETE"});S.classId=null;render();
+}
+
+/* ---------- Run types: reusable run setups for a kind of job ---------- */
+async function renderRunTypes(){
+  if(S.runTypeId)return renderRunTypeEditor();
+  const types=await api("/api/run-types");
+  $("main").innerHTML=`
+    <div class="head"><div><h2>Run types</h2><div class="muted">Reusable run setups for a kind of job, like Abaqus, LS-DYNA or a shell script, so studies of the same kind share one command list.</div></div>
+      <button class="primary" onclick="openRunTypeDialog()">New run type</button></div>
+    ${types.length?types.map(t=>`
+      <div class="nb-card" tabindex="0" onclick="openRunTypeEditor(${t.id})" onkeydown="if(event.key==='Enter')openRunTypeEditor(${t.id})">
+        <h4>${esc(t.name)}</h4>
+        <div class="muted">${(t.run_config.commands||[]).length} command${(t.run_config.commands||[]).length===1?"":"s"} · used by ${t.study_count} stud${t.study_count===1?"y":"ies"}</div>
+        ${t.description?`<div class="prose" style="margin-top:4px">${esc(t.description)}</div>`:""}
+      </div>`).join(""):`<div class="empty">No run types yet. Create one for each solver or script you run, like Abaqus, LS-DYNA or a shell pipeline.</div>`}`;
+}
+function openRunTypeDialog(){
+  $("rtName").value="";$("rtDesc").value="";
+  $("rtSetup").innerHTML=setupForm("rt_",{},null);
+  runTypeDlg.showModal();
+}
+async function saveNewRunType(){
+  const name=$("rtName").value.trim();if(!name)return $("rtName").focus();
+  try{
+    const t=await api("/api/run-types",jsonOpts("POST",{name,description:$("rtDesc").value,run_config:readSetup("rt_",false)}));
+    runTypeDlg.close();S.runTypeId=t.id;render();
+  }catch(e){alert(e.message)}
+}
+function openRunTypeEditor(id){S.runTypeId=id;render()}
+function closeRunTypeEditor(){S.runTypeId=null;render()}
+async function renderRunTypeEditor(){
+  const t=await api(`/api/run-types/${S.runTypeId}`);
+  $("main").innerHTML=`
+    <div class="head"><div><h2>${esc(t.name)}</h2><div class="muted">${t.study_count} stud${t.study_count===1?"y uses":"ies use"} this run type</div></div>
+      <div class="row"><button onclick="closeRunTypeEditor()">Close</button><button class="danger" onclick="deleteRunTypeNow(${t.id})">Delete run type</button></div></div>
+    <div class="box">
+      <label for="rtEditName">Name</label><input id="rtEditName" value="${esc(t.name)}">
+      <label for="rtEditDesc">Description</label><textarea id="rtEditDesc">${esc(t.description)}</textarea>
+      <fieldset><legend>Run setup</legend><div id="rtEditSetup">${setupForm("rte_",{...BLANK_SETUP,...t.run_config},null)}</div></fieldset>
+      <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="primary" onclick="saveRunTypeDetails(${t.id})">Save</button></div>
+    </div>`;
+}
+async function saveRunTypeDetails(tid){
+  try{
+    await api(`/api/run-types/${tid}`,jsonOpts("PATCH",{name:$("rtEditName").value.trim(),description:$("rtEditDesc").value,run_config:readSetup("rte_",false)}));
+    render();
+  }catch(e){alert(e.message)}
+}
+async function deleteRunTypeNow(tid){
+  if(!confirm("Delete this run type? Studies using it keep their own settings but lose the shared template."))return;
+  await api(`/api/run-types/${tid}`,{method:"DELETE"});S.runTypeId=null;render();
 }
 
 /* ---------- Job panel: one tab per attempt ---------- */
@@ -993,23 +1058,35 @@ async function compareHistory(){
 }
 
 /* ---------- Dialogs ---------- */
+function renderStudySetupSection(){
+  const rtId=$("sRunType").value?+$("sRunType").value:null;
+  const rt=rtId?S.studyRunTypes.find(r=>r.id===rtId):null;
+  const own=S.studyOwnCfg??(rt?{}:EXAMPLE_SETUP);
+  $("sSetup").innerHTML=setupForm("s_",own,rt?rt.run_config:null,"run type");
+}
 async function openStudyDialog(edit=false){
   const s=edit?S.studies.find(x=>x.id===S.studyId):null;S.editingStudy=s?s.id:null;
   $("studyDlgTitle").textContent=s?"Edit study":"New study";
   $("sName").value=s?.name||"";$("sDesc").value=s?.description||"";$("sSum").value=s?.results_summary||"";
-  const classes=await api("/api/study-classes");
+  const[classes,runTypes]=await Promise.all([api("/api/study-classes"),api("/api/run-types")]);
+  S.studyRunTypes=runTypes;
   $("sClass").innerHTML=`<option value="">No class</option>`+classes.map(c=>
     `<option value="${c.id}"${s?.class_id===c.id?" selected":""}>${esc(c.name)}</option>`).join("");
-  $("sSetup").innerHTML=setupForm("s_",s?{...BLANK_SETUP,...s.run_config}:EXAMPLE_SETUP,false);
+  $("sRunType").innerHTML=`<option value="">No run type</option>`+runTypes.map(t=>
+    `<option value="${t.id}"${s?.run_type_id===t.id?" selected":""}>${esc(t.name)}</option>`).join("");
+  S.studyOwnCfg=s?{...BLANK_SETUP,...s.run_config}:null;
+  renderStudySetupSection();
   studyDlg.showModal();
 }
 async function saveStudy(){
-  const body={name:$("sName").value.trim(),description:$("sDesc").value,results_summary:$("sSum").value,run_config:readSetup("s_",false)};
+  const rtId=$("sRunType").value?+$("sRunType").value:null;
+  const body={name:$("sName").value.trim(),description:$("sDesc").value,results_summary:$("sSum").value,run_config:readSetup("s_",!!rtId)};
   if(!body.name)return $("sName").focus();
   const classId=$("sClass").value?+$("sClass").value:null;
   try{
     const s=S.editingStudy?await api(`/api/studies/${S.editingStudy}`,jsonOpts("PATCH",body)):await api("/api/studies",jsonOpts("POST",body));
     await api(`/api/studies/${s.id}/class`,jsonOpts("POST",{class_id:classId}));
+    await api(`/api/studies/${s.id}/run-type`,jsonOpts("POST",{run_type_id:rtId}));
     studyDlg.close();pickStudy(s.id);
   }catch(e){alert(e.message)}
 }
@@ -1018,7 +1095,7 @@ async function deleteStudy(){if(!confirm("Delete this study, its jobs and their 
 function openJobDialog(){
   const s=S.studies.find(x=>x.id===S.studyId);
   $("jName").value="";$("jDesc").value="";
-  $("jSetup").innerHTML=setupForm("j_",{...BLANK_SETUP,...(s?.run_config||{})},true);
+  $("jSetup").innerHTML=setupForm("j_",{},s?.effective_run_config||BLANK_SETUP,"study");
   jobDlg.querySelector("details").open=false;jobDlg.showModal();
 }
 async function saveJob(){
