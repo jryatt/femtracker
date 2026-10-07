@@ -65,9 +65,37 @@ full revision; **Archive** hides an entry without deleting it. Markdown and HTML
 sanitized on the server — the same code path for the preview, the saved view and the export — so a
 shared FEM Tracker page can't be used to run a script in someone's browser.
 
+## Jupyter
+Two separate things, neither of which runs a kernel inside FEM Tracker itself:
+
+**Viewing a notebook.** A `.ipynb` file attached to a job as a result (**Add result**, same upload
+used for any file) gets a **View notebook** button that renders it read-only: markdown cells, code
+(shown, not run), and stream/image/table/error outputs. Rendering goes through the same sanitize
+path as the Notebook tab, so a notebook someone hands you can't carry a script along with it.
+
+**Starting Jupyter on the HPC.** The **Jupyter** page in the sidebar starts Jupyter on the HPC,
+opens an SSH tunnel to it, and opens it in your browser — one click. Since this hands back a
+live, token-authenticated Jupyter session with no login of its own, the `/api/jupyter/*` routes
+only answer to the machine FEM Tracker itself runs on, even if `[server] address` is `0.0.0.0` for
+the rest of the app — open the Jupyter page from that same machine. It's configured by the
+`[jupyter]` section in the settings file:
+```ini
+[jupyter]
+command = jupyter lab --no-browser --ip=127.0.0.1 --port={port}
+port = 8888
+workdir =
+```
+`command` runs in a login shell, the same as solver commands, so add a `module load` or
+`conda activate` line first if your remote shell doesn't already put `jupyter` on `PATH`. `workdir`
+is where it starts (empty = `[hpc] remote_workdir`). **Stop** tears down the tunnel; its "also stop
+it on the HPC" checkbox kills the remote Jupyter process too — left unchecked, it keeps running
+(useful on a shared/expensive compute node) and FEM Tracker just reconnects next time you click
+**Start**. The tunnel itself is always closed when FEM Tracker exits, so it never leaves an orphaned
+`plink`/`ssh` process behind.
+
 ## Run types
 A **run type** (sidebar: **Run types**) is a reusable run setup for one kind of job — Abaqus, LS-DYNA,
-a shell pipeline, whatever you run. It holds the same fields as a study's run setup (commands, files to
+RADIOSS, a shell pipeline, whatever you run. It holds the same fields as a study's run setup (commands, files to
 upload or retrieve, cleanup, ...). Assign one to a study and any field the study leaves blank falls back
 to the run type's, the same way a job's setup already falls back to its study's — so a study of a given
 run type usually only needs to say where its own inputs are. Editing a run type's commands updates every
@@ -97,6 +125,11 @@ The class editor's **Effective KPIs** table shows the full resolved set, each ma
 `FEMTracker.exe paths` prints them. Uninstalling keeps settings, database and results. Upgrading means
 running the newer installer over the old one.
 
+On Linux or macOS (dev or deployed, see below): settings `~/.config/FEMTracker/config.ini`,
+database/logs `~/.local/share/femtracker/`, results `~/Documents/FEM Tracker results/`. `femtracker
+paths` (or `build/dist/FEMTracker/FEMTracker paths`) prints them. Portable mode works the same way:
+drop a `config.ini` next to the binary and everything stays in that folder (`data/`, `results/`).
+
 ## Using it
 - **Study**: description, study results, and the run setup shared by its jobs. The run setup has the
   same sections as the HPC Batch Script Builder: files to upload, commands, and files to bring back.
@@ -118,13 +151,42 @@ Command line (the exe is in the install folder):
     FEMTracker.exe run-agent sync                             one check of running jobs
     FEMTracker.exe help
 
-## Try it on a Mac first
-Everything except the installer runs on macOS, including real HPC jobs. See
-[docs/testing-on-mac.md](docs/testing-on-mac.md): run the tests, try the app with no HPC
-(`transport = local`), connect with PuTTY from Homebrew or with OpenSSH, and build the Mac program
-with `packaging/build.sh`.
+## Run on Linux or macOS
+Everything except the Windows installer runs here too, including real HPC jobs. There are two ways
+to run it, and `./run.sh` (at the repo root) does either one for you:
 
-## Build it yourself
+**Development** — an editable checkout you can change and re-run without rebuilding anything, the
+way this project itself is normally worked on:
+
+    ./run.sh dev
+
+which is the same as:
+
+    python3.12 -m venv .venv && source .venv/bin/activate
+    pip install -e ".[test]"
+    femtracker start
+
+**Deployed** — a standalone, self-contained build (the same kind of artifact as the Windows
+installer/portable zip, with Python and all dependencies bundled in):
+
+    ./run.sh deploy
+
+which is the same as:
+
+    packaging/build.sh                      # runs the tests, then builds build/dist/FEMTracker
+    build/dist/FEMTracker/FEMTracker start
+
+Pass `--no-tests` to either the script or `packaging/build.sh` directly to skip the test suite and
+build faster. Both ways open http://127.0.0.1:8000 and share the same settings, database and logs
+(`~/.config/FEMTracker/config.ini`, `~/.local/share/femtracker/`), so you can switch between them
+freely.
+
+By default `[hpc] transport` is unset and jobs just wait in the queue. See
+[docs/testing-on-mac.md](docs/testing-on-mac.md) for the full walkthrough: trying the app with no
+HPC at all (`transport = local`), connecting with PuTTY from Homebrew or with OpenSSH, and what a
+Mac test does and doesn't cover compared to Windows.
+
+## Build the Windows installer yourself
 You need Windows 10/11 with:
 - [Python 3.10+](https://www.python.org/downloads/) (tick "Add python.exe to PATH");
 - [Inno Setup 6](https://jrsoftware.org/isdl.php), only for the installer.
@@ -151,10 +213,12 @@ building:
 
 Otherwise, ask IT to allow-list the install folder.
 
-## Run from source (development)
+## Run from source (development, Windows)
     python -m venv .venv && .venv\Scripts\activate
     pip install -e .[test]
     femtracker start          (or: python -m femtracker start)
+
+On Linux or macOS, see [Run on Linux or macOS](#run-on-linux-or-macos) above, or just run `./run.sh dev`.
 
 ## Tests
     pytest tests
@@ -164,6 +228,7 @@ The tests run a real server and drive the agents' plink/pscp code paths against 
 GitHub runs them on every push (`.github/workflows/tests.yml`).
 
 ## Project layout
+    run.sh                       Linux/macOS helper: ./run.sh dev | deploy
     femtracker/cli.py            FEMTracker.exe commands
     femtracker/settings.py       config.ini (defaults and documentation in DEFAULT_INI)
     femtracker/server.py         web API and SQLite database (schema and versioning model at the top)

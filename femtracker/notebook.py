@@ -10,6 +10,8 @@ Images: ![caption](asset:<sha256>) for a pasted/uploaded screen grab, ![caption]
 image already stored as a result. Both are rewritten to a same-origin /api/notebook/... URL before
 sanitizing, so the sanitizer never has to trust a custom URL scheme.
 """
+import base64
+import binascii
 import html
 import json
 import re
@@ -22,17 +24,18 @@ from markdown_it import MarkdownIt
 ALLOWED_TAGS = {
     "p", "br", "hr", "strong", "em", "s", "code", "pre", "blockquote",
     "h1", "h2", "h3", "h4", "h5", "h6", "ul", "ol", "li",
-    "table", "thead", "tbody", "tr", "th", "td", "a", "img", "span",
+    "table", "thead", "tbody", "tr", "th", "td", "a", "img", "span", "div",
 }
 ALLOWED_ATTRS = {
     "a": {"href", "title", "target", "rel", "download", "class", "data-kind", "data-id", "data-job", "data-number"},
     "img": {"src", "alt", "title"},
     "code": {"class"},
+    "pre": {"class"},
     "th": {"style"},
     "td": {"style"},
     "span": {"class", "title"},
+    "div": {"class"},
 }
-
 
 def _img_src_filter(tag, attr, value):
     if tag == "img" and attr == "src":
@@ -43,6 +46,25 @@ def _img_src_filter(tag, attr, value):
 def sanitize_html(raw: str) -> str:
     return nh3.clean(raw, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRS, attribute_filter=_img_src_filter,
                      link_rel=None, filter_style_properties={"text-align"}, strip_comments=True)
+
+
+# .ipynb rendering is the only place a data: URI is ever allowed, and only for an <img src> we built
+# ourselves in _nb_image() after sniffing the real bytes - never for anything reached via user HTML/MD.
+_DATA_IMG_RE = re.compile(r"^data:image/(?:png|jpeg|gif|webp);base64,[A-Za-z0-9+/=]+$")
+
+
+def _ipynb_img_filter(tag, attr, value):
+    if tag == "img" and attr == "src":
+        return value if _DATA_IMG_RE.match(value) else None
+    if value.startswith("data:"):
+        return None
+    return value
+
+
+def _sanitize_ipynb_html(raw: str) -> str:
+    return nh3.clean(raw, tags=ALLOWED_TAGS, attributes=ALLOWED_ATTRS, attribute_filter=_ipynb_img_filter,
+                     link_rel=None, filter_style_properties={"text-align"}, strip_comments=True,
+                     url_schemes=nh3.ALLOWED_URL_SCHEMES | {"data"})
 
 
 def _render_link_open(self, tokens, idx, options, env):
@@ -232,6 +254,76 @@ def render_body(c, fmt: str, body: str) -> str:
     raw = rewrite_image_srcs(raw)
     raw = resolve_bracket_refs(raw, c)
     return sanitize_html(raw)
+
+
+# ---------- .ipynb viewing: read-only, no kernel, same sanitize pass as everything else ----------
+ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _nb_text(src) -> str:
+    """A cell's 'source' or an output's text: either a string or a list of line strings."""
+    return "".join(src) if isinstance(src, list) else (src or "")
+
+
+def _nb_image(data: str):
+    """Base64 output data -> a verified data: URI, or None if it doesn't decode to a real image
+    (never trust the notebook's own mime label)."""
+    try:
+        raw = base64.b64decode(data, validate=False)
+    except (binascii.Error, ValueError):
+        return None
+    try:
+        sniffed, _, _ = detect_image(raw)
+    except BadImage:
+        return None
+    return f'<img src="data:{sniffed};base64,{base64.b64encode(raw).decode("ascii")}">'
+
+
+def _nb_output(out: dict) -> str:
+    otype = out.get("output_type")
+    if otype == "stream":
+        return f"<pre>{html.escape(_nb_text(out.get('text')))}</pre>"
+    if otype == "error":
+        trace = "\n".join(ANSI_RE.sub("", line) for line in out.get("traceback") or [])
+        header = f"{out.get('ename', 'Error')}: {out.get('evalue', '')}"
+        return f'<pre class="nb-error">{html.escape(trace or header)}</pre>'
+    if otype in ("execute_result", "display_data"):
+        data = out.get("data") or {}
+        for mime in ("image/png", "image/jpeg", "image/gif"):
+            if mime in data:
+                img = _nb_image(_nb_text(data[mime]))
+                if img:
+                    return img
+        if "text/html" in data:
+            return _nb_text(data["text/html"])
+        if "text/plain" in data:
+            return f"<pre>{html.escape(_nb_text(data['text/plain']))}</pre>"
+    return ""  # image/svg+xml and anything else: not shown, consistent with "no SVG, ever"
+
+
+def _nb_cell(cell: dict) -> str:
+    ctype = cell.get("cell_type")
+    source = _nb_text(cell.get("source"))
+    if ctype == "markdown":
+        body = MD.render(source)
+    elif ctype == "code":
+        outputs = "".join(_nb_output(o) for o in cell.get("outputs") or [])
+        body = f"<pre><code>{html.escape(source)}</code></pre>{outputs}"
+    else:
+        return ""
+    return f'<div class="nb-cell nb-{html.escape(ctype)}">{body}</div>'
+
+
+def render_ipynb(raw: str) -> str:
+    """A .ipynb file's JSON text -> sanitized read-only HTML. No kernel, nothing executes."""
+    try:
+        nb = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise ValueError(f"Not a valid .ipynb file: {e}")
+    cells = nb.get("cells") if isinstance(nb, dict) else None
+    if not isinstance(cells, list):
+        raise ValueError("Not a valid .ipynb file: no cells")
+    return _sanitize_ipynb_html("".join(_nb_cell(c) for c in cells))
 
 
 # ---------- Images: real-content sniffing (never trust the filename or declared content-type) ----------

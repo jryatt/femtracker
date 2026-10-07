@@ -123,6 +123,11 @@ button:disabled{opacity:.5;cursor:not-allowed}
 .nb-preview img{max-width:100%;height:auto;cursor:zoom-in}
 .nb-preview pre{max-width:100%}
 .nb-preview :first-child{margin-top:0}
+.ipynb-view{min-height:0}
+.ipynb-view .nb-cell{margin:0 0 14px}
+.ipynb-view .nb-cell:last-child{margin-bottom:0}
+.ipynb-view .nb-code pre{background:#F6F8FA}
+.ipynb-view .nb-error{color:var(--failed);background:#FFF3F2}
 .nbref{color:var(--queued);text-decoration:underline;cursor:pointer}
 .nbref-missing{color:var(--failed);font-style:italic;cursor:default}
 .nb-drop{outline:2px dashed var(--queued)}
@@ -147,6 +152,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
       <button id="navQueue" onclick="showView('queue')">Queues</button>
       <button id="navClasses" onclick="showView('classes')">Study classes</button>
       <button id="navRunTypes" onclick="showView('runtypes')">Run types</button>
+      <button id="navJupyter" onclick="showView('jupyter')">Jupyter</button>
     </div>
     <button class="primary" style="background:#fff;color:var(--ink)" onclick="openStudyDialog()">New study</button>
     <div class="studies" id="studyList"></div>
@@ -163,7 +169,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <label for="sClass">Study class</label><select id="sClass"><option value="">No class</option></select>
   <div class="hint">A class defines the KPIs this study is expected to report, so results compare consistently. Manage classes from <b>Study classes</b> in the sidebar.</div>
   <label for="sRunType">Run type</label><select id="sRunType" onchange="renderStudySetupSection()"><option value="">No run type</option></select>
-  <div class="hint">The solver or script this study runs: Abaqus, LS-DYNA, a shell pipeline, etc. Leave a run setup field below empty to use the run type's setting. Manage run types from <b>Run types</b> in the sidebar.</div>
+  <div class="hint">The solver or script this study runs: Abaqus, LS-DYNA, RADIOSS, a shell pipeline, etc. Leave a run setup field below empty to use the run type's setting. Manage run types from <b>Run types</b> in the sidebar.</div>
   <label for="sDesc">Description</label><textarea id="sDesc" placeholder="Goal, geometry, load cases, acceptance criteria"></textarea>
   <label for="sSum">Study results</label><textarea id="sSum" placeholder="Conclusions across all runs"></textarea>
   <fieldset><legend>Run setup, shared by every job in the study</legend><div id="sSetup"></div></fieldset>
@@ -185,7 +191,7 @@ button:disabled{opacity:.5;cursor:not-allowed}
 
 <dialog id="runTypeDlg">
   <h3>New run type</h3>
-  <label for="rtName">Name</label><input id="rtName" placeholder="Abaqus, LS-DYNA, Shell script...">
+  <label for="rtName">Name</label><input id="rtName" placeholder="Abaqus, LS-DYNA, RADIOSS, Shell script...">
   <label for="rtDesc">Description</label><textarea id="rtDesc" placeholder="What kind of job this runs"></textarea>
   <fieldset><legend>Run setup</legend><div id="rtSetup"></div></fieldset>
   <div class="row" style="justify-content:flex-end;margin-top:14px">
@@ -253,6 +259,12 @@ button:disabled{opacity:.5;cursor:not-allowed}
   <p class="muted" style="margin:0 0 8px">Pick any two saved versions to compare.</p>
   <div id="nbHistoryList"></div>
   <div id="nbHistoryCompare" class="nb-grid" style="margin-top:14px"></div>
+</dialog>
+
+<dialog id="ipynbDlg" style="max-width:900px;width:90vw">
+  <div class="head" style="margin-bottom:8px"><h3>Notebook</h3><button onclick="ipynbDlg.close()">Close</button></div>
+  <p class="hint" style="margin:0 0 10px">Read-only: nothing here runs a kernel.</p>
+  <div id="ipynbBody" class="nb-preview ipynb-view" style="max-height:70vh"></div>
 </dialog>
 
 <input type="file" id="nbFilePick" accept="image/png,image/jpeg,image/gif,image/webp" style="display:none" onchange="nbFilePicked()">
@@ -366,7 +378,8 @@ function showView(v){
   if(S.nbDirty&&!confirmDiscardNotebookEdits())return;
   S.nbDirty=false;S.nbEntry=null;
   S.view=v;$("navStudies").classList.toggle("on",v==="study");$("navQueue").classList.toggle("on",v==="queue");
-  $("navClasses").classList.toggle("on",v==="classes");$("navRunTypes").classList.toggle("on",v==="runtypes");render();
+  $("navClasses").classList.toggle("on",v==="classes");$("navRunTypes").classList.toggle("on",v==="runtypes");
+  $("navJupyter").classList.toggle("on",v==="jupyter");render();
 }
 function pickStudy(id){if(S.nbDirty&&!confirmDiscardNotebookEdits())return;S.nbDirty=false;S.nbEntry=null;S.studyId=id;showView("study")}
 window.addEventListener("beforeunload",e=>{if(S.nbDirty){e.preventDefault();e.returnValue=""}});
@@ -376,6 +389,7 @@ async function render(){
   if(S.view==="queue")return renderQueue();
   if(S.view==="classes")return renderClasses();
   if(S.view==="runtypes")return renderRunTypes();
+  if(S.view==="jupyter")return renderJupyter();
   const m=$("main");
   if(!S.studyId){m.innerHTML=`<div class="empty"><h3>Start with a study</h3><p>A study groups related runs, like a mesh convergence check or a design sweep, and holds the commands they run on the HPC.</p><button class="primary" onclick="openStudyDialog()">New study</button></div>`;return}
   const [s,jobs,findings,kpis]=await Promise.all([api(`/api/studies/${S.studyId}`),api(`/api/jobs?study_id=${S.studyId}`),
@@ -599,14 +613,14 @@ async function renderRunTypes(){
   if(S.runTypeId)return renderRunTypeEditor();
   const types=await api("/api/run-types");
   $("main").innerHTML=`
-    <div class="head"><div><h2>Run types</h2><div class="muted">Reusable run setups for a kind of job, like Abaqus, LS-DYNA or a shell script, so studies of the same kind share one command list.</div></div>
+    <div class="head"><div><h2>Run types</h2><div class="muted">Reusable run setups for a kind of job, like Abaqus, LS-DYNA, RADIOSS or a shell script, so studies of the same kind share one command list.</div></div>
       <button class="primary" onclick="openRunTypeDialog()">New run type</button></div>
     ${types.length?types.map(t=>`
       <div class="nb-card" tabindex="0" onclick="openRunTypeEditor(${t.id})" onkeydown="if(event.key==='Enter')openRunTypeEditor(${t.id})">
         <h4>${esc(t.name)}</h4>
         <div class="muted">${(t.run_config.commands||[]).length} command${(t.run_config.commands||[]).length===1?"":"s"} · used by ${t.study_count} stud${t.study_count===1?"y":"ies"}</div>
         ${t.description?`<div class="prose" style="margin-top:4px">${esc(t.description)}</div>`:""}
-      </div>`).join(""):`<div class="empty">No run types yet. Create one for each solver or script you run, like Abaqus, LS-DYNA or a shell pipeline.</div>`}`;
+      </div>`).join(""):`<div class="empty">No run types yet. Create one for each solver or script you run, like Abaqus, LS-DYNA or RADIOSS.</div>`}`;
 }
 function openRunTypeDialog(){
   $("rtName").value="";$("rtDesc").value="";
@@ -643,6 +657,44 @@ async function saveRunTypeDetails(tid){
 async function deleteRunTypeNow(tid){
   if(!confirm("Delete this run type? Studies using it keep their own settings but lose the shared template."))return;
   await api(`/api/run-types/${tid}`,{method:"DELETE"});S.runTypeId=null;render();
+}
+
+/* ---------- Jupyter: start it on the HPC, tunnel to it, open it in the browser ---------- */
+async function renderJupyter(){
+  let st;
+  try{st=await api("/api/jupyter/status")}
+  catch(e){$("main").innerHTML=`<div class="empty"><h3>Jupyter</h3><p>${esc(e.message)}</p></div>`;return}
+  $("main").innerHTML=`
+    <div class="head"><div><h2>Jupyter</h2><div class="muted">Starts Jupyter on the HPC and opens it in your browser through an SSH tunnel. No kernel runs inside FEM Tracker itself.</div></div></div>
+    <div class="box">
+      <p>${st.running?`Running: <a href="${esc(st.url)}" target="_blank">${esc(st.url)}</a>`:'<span class="muted">Not running.</span>'}</p>
+      <div class="row">
+        <button class="primary" id="jpStartBtn" onclick="startJupyter()">${st.running?"Reopen":"Start Jupyter"}</button>
+        ${st.running?`<button onclick="stopJupyter()">Stop</button>
+        <label class="check" style="margin-left:8px"><input type="checkbox" id="jpStopRemote"> also stop it on the HPC</label>`:""}
+      </div>
+      <p id="jpStatus" class="hint"></p>
+      <p class="hint">Uses the <code>[jupyter]</code> section in the settings file: the command to run, its port, and which
+      folder to start it in (empty = <code>[hpc] remote_workdir</code>). The command must leave Jupyter available on that
+      shell, e.g. a <code>module load</code> or <code>conda activate</code> line first, the same way solver commands do.</p>
+    </div>`;
+}
+async function startJupyter(){
+  const btn=$("jpStartBtn");btn.disabled=true;
+  $("jpStatus").textContent="Starting… this can take a little while the first time.";
+  try{
+    const r=await api("/api/jupyter/start",{method:"POST"});
+    window.open(r.url,"_blank");
+    await render();
+  }catch(e){
+    btn.disabled=false;$("jpStatus").textContent="";
+    alert(e.message);
+  }
+}
+async function stopJupyter(){
+  const remoteToo=$("jpStopRemote")?.checked||false;
+  try{await api(`/api/jupyter/stop?remote_too=${remoteToo}`,{method:"POST"});await render()}
+  catch(e){alert(e.message)}
 }
 
 /* ---------- Job panel: one tab per attempt ---------- */
@@ -689,7 +741,12 @@ function resultItem(r){
         :r.local_path?`<span>On this PC: <span class="mono">${esc(r.local_path)}</span></span><span class="muted">${fmtB(r.size_bytes)}</span>`
         :r.remote_path?`<span>On the HPC: <span class="mono">${esc(r.remote_path)}</span></span><span class="muted">${fmtB(r.size_bytes)}</span>`
         :`<span class="muted">No file</span>`}
+      ${r.sha256&&(r.filename||"").toLowerCase().endsWith(".ipynb")?`<button onclick="viewIpynb(${r.id})">View notebook</button>`:""}
       ${r.source==="manual"?`<button class="danger" style="margin-left:auto" onclick="deleteResult(${r.id})">Delete</button>`:""}</div></div>`;
+}
+async function viewIpynb(rid){
+  try{const {html}=await api(`/api/results/${rid}/notebook`);$("ipynbBody").innerHTML=html;ipynbDlg.showModal()}
+  catch(e){alert(e.message)}
 }
 
 async function renderDrawer(){

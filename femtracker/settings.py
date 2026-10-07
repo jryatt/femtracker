@@ -89,6 +89,8 @@ plink =
 pscp =
 ; OpenSSH private key, only for transport = openssh
 ssh_key =
+; SSH port, if not the default 22 (putty and openssh both use this)
+ssh_port =
 ; Folder on the HPC where each job gets study_<id>/job_<id>. Use a shared filesystem (scratch).
 remote_workdir =
 
@@ -128,6 +130,16 @@ populate_agent = yes
 max_image_mb = 20
 ; A folder attached to an entry is zipped and stored as one object; refused if the zip is bigger than this.
 max_attachment_mb = 200
+
+[jupyter]
+; "Start Jupyter" (sidebar) runs this on the HPC and opens it in your browser through an SSH
+; tunnel. {port} is replaced with the port below. Add a module load / conda activate line first
+; if your login shell doesn't already have jupyter on PATH.
+command = jupyter lab --no-browser --ip=127.0.0.1 --port={port}
+; Port Jupyter listens on, on the HPC. Only reachable from the HPC itself; the tunnel forwards it.
+port = 8888
+; Folder to start Jupyter in on the HPC. Empty = [hpc] remote_workdir
+workdir =
 """
 
 # (section, key, env name, type)
@@ -136,7 +148,8 @@ FIELDS = [
     ("server", "open_browser", "OPEN_BROWSER", bool),
     ("hpc", "transport", "TRANSPORT", str), ("hpc", "user", "USER_NAME", str), ("hpc", "host", "HOST", str),
     ("hpc", "ppk", "PPK", str), ("hpc", "plink", "PLINK", str), ("hpc", "pscp", "PSCP", str),
-    ("hpc", "ssh_key", "SSH_KEY", str), ("hpc", "remote_workdir", "REMOTE_WORKDIR", str),
+    ("hpc", "ssh_key", "SSH_KEY", str), ("hpc", "ssh_port", "SSH_PORT", str),
+    ("hpc", "remote_workdir", "REMOTE_WORKDIR", str),
     ("folders", "local_results_root", "LOCAL_RESULTS_ROOT", str),
     ("run", "max_active_runs", "MAX_ACTIVE_RUNS", int), ("run", "heartbeat_timeout_min", "HEARTBEAT_TIMEOUT_MIN", float),
     ("run", "start_timeout_min", "START_TIMEOUT_MIN", float), ("run", "poll_seconds", "POLL_SECONDS", float),
@@ -147,6 +160,8 @@ FIELDS = [
     ("agents", "populate_agent", "POPULATE_AGENT", bool),
     ("notebook", "max_image_mb", "MAX_IMAGE_MB", float),
     ("notebook", "max_attachment_mb", "MAX_ATTACHMENT_MB", float),
+    ("jupyter", "command", "JUPYTER_COMMAND", str), ("jupyter", "port", "JUPYTER_PORT", int),
+    ("jupyter", "workdir", "JUPYTER_WORKDIR", str),
 ]
 
 
@@ -192,6 +207,7 @@ def load():
     g["LOG_DIR"] = g["DATA_DIR"] / "logs"
     g["DB_PATH"] = g["DB"] or str(g["DATA_DIR"] / "fem_tracker.db")
     g["LOCAL_RESULTS_ROOT"] = g["LOCAL_RESULTS_ROOT"] or str(default_results_dir())
+    g["JUPYTER_WORKDIR"] = g["JUPYTER_WORKDIR"] or g["REMOTE_WORKDIR"]
     g["PLINK"] = g["PLINK"] or find_putty("plink")
     g["PSCP"] = g["PSCP"] or find_putty("pscp")
     g["AGENT_NAME"] = g["AGENT_NAME"] or socket.gethostname()

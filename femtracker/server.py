@@ -27,16 +27,18 @@ import os
 import re
 import sqlite3
 import zipfile
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from femtracker import __version__, notebook, settings
+from femtracker.agent import jupyter
+from femtracker.agent.remote import RemoteError
 
 DB_PATH = settings.DB_PATH
 STATIC_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
@@ -84,7 +86,7 @@ CREATE TABLE IF NOT EXISTS study_kpi_pins (       -- which job (in a study of th
     PRIMARY KEY (study_id, class_kpi_id)
 );
 
--- A reusable run setup template for one kind of job: Abaqus, LS-DYNA, a shell pipeline, etc. A
+-- A reusable run setup template for one kind of job: Abaqus, LS-DYNA, RADIOSS, a shell pipeline, etc. A
 -- study picks one and its run setup only needs to say what's different (inputs, local folder);
 -- commands and the rest fall back to the run type, the same way a job's setup falls back to its study's.
 CREATE TABLE IF NOT EXISTS run_types (
@@ -405,7 +407,13 @@ def parse_json(text: Optional[str], field: str) -> str:
         raise HTTPException(422, f"{field} must be valid JSON")
 
 
-app = FastAPI(title="FEM Tracker", version=__version__)
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    yield
+    jupyter.stop()  # never leave an orphaned plink/ssh tunnel running after FEM Tracker exits
+
+
+app = FastAPI(title="FEM Tracker", version=__version__, lifespan=_lifespan)
 init_db()
 
 
@@ -535,7 +543,7 @@ def delete_study(sid: int):
     return Response(status_code=204)
 
 
-# ---------- Run types: reusable run setups for a kind of job (Abaqus, LS-DYNA, a shell script...) ----------
+# ---------- Run types: reusable run setups for a kind of job (Abaqus, LS-DYNA, RADIOSS, a shell script...) ----------
 # A study's run setup falls back to its run type's, the same way a job's run setup falls back to its study's.
 class RunTypeIn(BaseModel):
     name: str
@@ -1399,6 +1407,53 @@ def download_blob(rid: int):
 def delete_result(rid: int):
     with db() as c:
         c.execute("DELETE FROM results WHERE id=? AND source='manual'", (rid,))
+    return Response(status_code=204)
+
+
+@app.get("/api/results/{rid}/notebook")
+def result_notebook(rid: int):
+    """A result that's a .ipynb file, rendered read-only: no kernel, same sanitize path as everything else."""
+    with db() as c:
+        r = c.execute("SELECT filename, blob FROM results WHERE id=?", (rid,)).fetchone()
+    if not r or r["blob"] is None:
+        raise HTTPException(404, "No file stored in the database for this result")
+    if not (r["filename"] or "").lower().endswith(".ipynb"):
+        raise HTTPException(400, "Not a .ipynb file")
+    try:
+        text = bytes(r["blob"]).decode("utf-8")
+    except UnicodeDecodeError:
+        raise HTTPException(422, "Not a valid .ipynb file: not UTF-8 text")
+    try:
+        return {"html": notebook.render_ipynb(text)}
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+# ---------- Jupyter: start it on the HPC, tunnel to it, open it in the browser ----------
+# These routes hand back a live, token-authenticated Jupyter session (i.e. remote code execution
+# on the HPC) with no login of their own, so - unlike the rest of the API - they stay off-limits
+# to anyone but the machine FEM Tracker itself runs on, even if [server] address is 0.0.0.0.
+def _require_loopback(request: Request):
+    if request.client is None or request.client.host not in ("127.0.0.1", "::1"):
+        raise HTTPException(403, "Jupyter can only be started from the machine FEM Tracker runs on")
+
+
+@app.get("/api/jupyter/status", dependencies=[Depends(_require_loopback)])
+def jupyter_status():
+    return jupyter.status()
+
+
+@app.post("/api/jupyter/start", dependencies=[Depends(_require_loopback)])
+def jupyter_start():
+    try:
+        return jupyter.start()
+    except (RemoteError, RuntimeError) as e:
+        raise HTTPException(502, str(e))
+
+
+@app.post("/api/jupyter/stop", status_code=204, dependencies=[Depends(_require_loopback)])
+def jupyter_stop(remote_too: bool = False):
+    jupyter.stop(remote_too=remote_too)
     return Response(status_code=204)
 
 

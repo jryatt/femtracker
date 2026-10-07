@@ -38,21 +38,36 @@ def _call(cmd, stdin=None, timeout=300):
     return p.stdout
 
 
+def _ssh_key_args():
+    args = ["-i", config.SSH_KEY] if config.SSH_KEY else []
+    if config.SSH_PORT:
+        args += ["-p", config.SSH_PORT]
+    return args
+
+
+def _scp_port_args():
+    return ["-P", config.SSH_PORT] if config.SSH_PORT else []
+
+
+def _putty_port_args():
+    return ["-P", config.SSH_PORT] if config.SSH_PORT else []
+
+
 def run(script, timeout=300):
     """Run a bash script on the HPC and return its stdout."""
     body = script.replace("\r\n", "\n")
     if config.TRANSPORT == "local":
         return _call(["bash", "-s"], stdin=body, timeout=timeout)
     if config.TRANSPORT == "openssh":
-        key = ["-i", config.SSH_KEY] if config.SSH_KEY else []
-        return _call(["ssh", "-o", "BatchMode=yes", *key, target(), "bash -s"], stdin=body, timeout=timeout)
+        return _call(["ssh", "-o", "BatchMode=yes", *_ssh_key_args(), target(), "bash -s"], stdin=body, timeout=timeout)
     # PuTTY: plink -m runs a command file through the login shell; hand it straight to bash.
     wrapped = "exec bash -s <<'__FEM_EOF__'\n" + body + "\n__FEM_EOF__\n"
     fd, path = tempfile.mkstemp(suffix=".sh")
     try:
         with os.fdopen(fd, "w", newline="\n") as fh:
             fh.write(wrapped)
-        return _call([config.PLINK, "-ssh", "-batch", "-i", config.PPK, "-m", path, target()], timeout=timeout)
+        return _call([config.PLINK, "-ssh", "-batch", "-i", config.PPK, *_putty_port_args(), "-m", path, target()],
+                     timeout=timeout)
     finally:
         os.remove(path)
 
@@ -66,9 +81,11 @@ def upload(local_files, remote_dir, timeout=3600):
         return
     if config.TRANSPORT == "openssh":
         key = ["-i", config.SSH_KEY] if config.SSH_KEY else []
-        _call(["scp", "-q", "-o", "BatchMode=yes", *key, *local_files, f"{target()}:{remote_dir}/"], timeout=timeout)
+        _call(["scp", "-q", "-o", "BatchMode=yes", *key, *_scp_port_args(), *local_files, f"{target()}:{remote_dir}/"],
+             timeout=timeout)
         return
-    _call([config.PSCP, "-batch", "-q", "-i", config.PPK, *local_files, f"{target()}:{remote_dir}/"], timeout=timeout)
+    _call([config.PSCP, "-batch", "-q", "-i", config.PPK, *_putty_port_args(), *local_files, f"{target()}:{remote_dir}/"],
+         timeout=timeout)
 
 
 def download(remote_file, local_dir, timeout=None):
@@ -78,9 +95,11 @@ def download(remote_file, local_dir, timeout=None):
         return
     if config.TRANSPORT == "openssh":
         key = ["-i", config.SSH_KEY] if config.SSH_KEY else []
-        _call(["scp", "-q", "-o", "BatchMode=yes", *key, f"{target()}:{remote_file}", local_dir], timeout=timeout)
+        _call(["scp", "-q", "-o", "BatchMode=yes", *key, *_scp_port_args(), f"{target()}:{remote_file}", local_dir],
+             timeout=timeout)
         return
-    _call([config.PSCP, "-batch", "-q", "-i", config.PPK, f"{target()}:{remote_file}", local_dir], timeout=timeout)
+    _call([config.PSCP, "-batch", "-q", "-i", config.PPK, *_putty_port_args(), f"{target()}:{remote_file}", local_dir],
+         timeout=timeout)
 
 
 def attempt_dir(a):

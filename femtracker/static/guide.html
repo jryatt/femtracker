@@ -546,6 +546,7 @@ tail -f /scratch/jsmith/fem_tracker/study_1/job_1/attempt_1/run.log</code></pre>
   <h2>Add results by hand</h2>
   <p class="lede">Hand calculations, test data or a screenshot from Abaqus/Viewer can sit next to the automatic results.</p>
   <p>At the bottom of a job's panel, use <b>Add a result by hand</b>. Give it a name, a description, optional metrics as JSON (for example <code>{"Max_Mises": 209}</code>), and optionally a file. Results added by hand belong to the job rather than to an attempt. They appear in the study's comparison table marked "by hand", and are the only results you can delete.</p>
+  <p>If the file is a <code>.ipynb</code>, a <b>View notebook</b> button appears next to it: markdown cells, code (shown, not run) and its stream/image/table/error outputs, read-only — no kernel runs inside FEM Tracker.</p>
 </section>
 
 <section id="import">
@@ -945,6 +946,10 @@ git commit -m "Bracket sweep: design load job at 7 mm"</code></pre>
     <tr><th colspan="3">[agents]</th></tr>
     <tr><td><code>name</code></td><td>computer name</td><td>identifies this PC's jobs (see <a href="#backup">Move to a new PC</a>)</td></tr>
     <tr><td><code>run_agent</code>, <code>populate_agent</code></td><td><code>yes</code></td><td>switch either step off, for example to only populate on a second PC</td></tr>
+    <tr><th colspan="3">[jupyter]</th></tr>
+    <tr><td><code>command</code></td><td><code>jupyter lab --no-browser --ip=127.0.0.1 --port={port}</code></td><td>runs in a login shell on the HPC when you click <b>Start Jupyter</b> (sidebar); add <code>module load</code>/<code>conda activate</code> first if needed</td></tr>
+    <tr><td><code>port</code></td><td><code>8888</code></td><td>port Jupyter listens on, on the HPC; the tunnel forwards it to a free port on this PC</td></tr>
+    <tr><td><code>workdir</code></td><td><code>[hpc] remote_workdir</code></td><td>folder to start Jupyter in, on the HPC</td></tr>
   </table>
   <p>Every setting can also be set with an environment variable, which wins over the file. The variables are named <code>FEM_</code> followed by the setting in capitals, for example <code>FEM_PORT</code> or <code>FEM_MAX_ACTIVE_RUNS</code>. There are four exceptions: <code>FEM_BIND_HOST</code> for the server address, <code>FEM_USER_NAME</code> for the HPC user, <code>FEM_DB</code> for the database, and <code>FEM_AGENT_NAME</code> for <code>[agents] name</code>. <code>FEM_CONFIG</code> points to a different <code>config.ini</code>, and <code>FEM_DATA_DIR</code> to a different data folder.</p>
 </section>
